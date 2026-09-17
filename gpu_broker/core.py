@@ -95,7 +95,7 @@ class Broker:
 
     def _schema(self) -> None:
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-        if version > 1:
+        if version > 2:
             raise RuntimeError(f"Database schema {version} is newer than this broker")
         self.conn.executescript(
             """
@@ -125,6 +125,7 @@ class Broker:
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
                 request_key TEXT NOT NULL, owner_instance TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'realtime',
                 status TEXT NOT NULL, reason TEXT, created_at REAL NOT NULL,
                 updated_at REAL NOT NULL, heartbeat_at REAL NOT NULL,
                 UNIQUE(project_id, request_key)
@@ -156,13 +157,15 @@ class Broker:
             CREATE INDEX IF NOT EXISTS samples_gpu_ts ON samples(gpu_uuid, ts);
             """
         )
+        if "kind" not in {row[1] for row in self.conn.execute("PRAGMA table_info(sessions)")}:
+            self.conn.execute("ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'realtime'")
         with self.transaction():
             for project, label in PROJECTS.items():
                 self.conn.execute(
                     "INSERT OR IGNORE INTO projects(id,label) VALUES (?,?)", (project, label)
                 )
             self.conn.execute("INSERT OR IGNORE INTO meta(key,value) VALUES ('allocation_enabled','0')")
-            self.conn.execute("PRAGMA user_version=1")
+            self.conn.execute("PRAGMA user_version=2")
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -432,7 +435,7 @@ class Broker:
                     "SESSION_PREPARING", project_id=session["project_id"], session_id=session["id"]
                 )
         if session is not None:
-            self._all_waiting("WAIT_REALTIME")
+            self._all_waiting("WAIT_TASK" if session["kind"] == "batch_task" else "WAIT_REALTIME")
             waiting = self.conn.execute(
                 "SELECT p.*, profiles.peak_growth_mib, profiles.max_seconds, "
                 "jobs.project_id, projects.last_seen, projects.instance_id, projects.enabled "
@@ -467,20 +470,32 @@ class Broker:
             now - permit["last_seen"] > self.settings.heartbeat_timeout_seconds:
             self._reason(permit["id"], "WAIT_PROJECT_OFFLINE")
             return False
-        safety = max(self.settings.safety_floor_mib, int(card["total_mib"] * self.settings.safety_ratio))
-        if permit["peak_growth_mib"] + safety > card["total_mib"]:
-            self._reason(permit["id"], "PROFILE_NOT_FIT")
+        task_session = None
+        if permit["session_id"]:
+            task_session = self.conn.execute(
+                "SELECT kind,status FROM sessions WHERE id=?", (permit["session_id"],)
+            ).fetchone()
+        exclusive_task = bool(task_session and task_session["kind"] == "batch_task")
+        if exclusive_task and task_session["status"] != "READY":
+            self._reason(permit["id"], "WAIT_TASK_READY")
             return False
-        if card["used_mib"] + permit["peak_growth_mib"] + safety > card["total_mib"]:
-            self._reason(permit["id"], "WAIT_VRAM")
-            return False
+        if not exclusive_task:
+            safety = max(self.settings.safety_floor_mib, int(card["total_mib"] * self.settings.safety_ratio))
+            if permit["peak_growth_mib"] + safety > card["total_mib"]:
+                self._reason(permit["id"], "PROFILE_NOT_FIT")
+                return False
+            if card["used_mib"] + permit["peak_growth_mib"] + safety > card["total_mib"]:
+                self._reason(permit["id"], "WAIT_VRAM")
+                return False
         self.conn.execute(
             "UPDATE permits SET status='ACTIVE',reason=NULL,granted_at=?,heartbeat_at=? WHERE id=?",
             (now, now, permit["id"]),
         )
         self._event(
             "PERMIT_GRANTED", project_id=permit["project_id"], job_id=permit["job_id"],
-            permit_id=permit["id"], detail={"profile_id": permit["profile_id"], "peak_growth_mib": permit["peak_growth_mib"]},
+            permit_id=permit["id"], detail={"profile_id": permit["profile_id"],
+                                            "peak_growth_mib": permit["peak_growth_mib"],
+                                            "exclusive_task": exclusive_task},
         )
         return True
 
@@ -631,7 +646,10 @@ class Broker:
                 self._event("JOB_STATUS", project_id=project_id, job_id=job_id, detail={"status": status})
             return self._one("SELECT * FROM jobs WHERE id=?", (job_id,))
 
-    def request_session(self, project_id: str, request_key: str, owner_instance: str) -> dict:
+    def request_session(self, project_id: str, request_key: str, owner_instance: str,
+                        kind: str = "realtime") -> dict:
+        if kind not in ("realtime", "batch_task"):
+            raise BrokerError(422, "Unknown session kind")
         with self.transaction():
             project = self._project(project_id)
             existing = self.conn.execute(
@@ -639,8 +657,8 @@ class Broker:
                 (project_id, request_key),
             ).fetchone()
             if existing:
-                if existing["owner_instance"] != owner_instance:
-                    raise BrokerError(409, "Session key belongs to another process instance")
+                if existing["owner_instance"] != owner_instance or existing["kind"] != kind:
+                    raise BrokerError(409, "Session key belongs to another owner or kind")
                 return dict(existing)
             if project["instance_id"] != owner_instance or project["last_seen"] is None or \
                 time.time() - project["last_seen"] > self.settings.heartbeat_timeout_seconds:
@@ -648,9 +666,9 @@ class Broker:
             session_id = _id()
             now = time.time()
             self.conn.execute(
-                "INSERT INTO sessions(id,project_id,request_key,owner_instance,status,reason,created_at,updated_at,heartbeat_at) "
-                "VALUES (?,?,?,?,'REQUESTED','WAIT_BATCH',?,?,?)",
-                (session_id, project_id, request_key, owner_instance, now, now, now),
+                "INSERT INTO sessions(id,project_id,request_key,owner_instance,kind,status,reason,created_at,updated_at,heartbeat_at) "
+                "VALUES (?,?,?,?,?,'REQUESTED','WAIT_BATCH',?,?,?)",
+                (session_id, project_id, request_key, owner_instance, kind, now, now, now),
             )
             self._event("SESSION_REQUESTED", project_id=project_id, session_id=session_id)
             self._tick(now)
@@ -731,12 +749,18 @@ class Broker:
                 if not session_id:
                     raise BrokerError(422, "Realtime permit requires a protected session")
                 session = self._same_project("sessions", session_id, project_id)
+                if session["kind"] != "realtime":
+                    raise BrokerError(409, "Realtime permit requires a realtime session")
                 if session["status"] not in ("REQUESTED", "PREPARING", "READY"):
                     raise BrokerError(409, "Realtime session is not available")
                 if session["owner_instance"] != owner_instance:
                     raise BrokerError(409, "Session belongs to another process instance")
             elif session_id is not None:
-                raise BrokerError(422, "Batch permit cannot use a realtime session")
+                session = self._same_project("sessions", session_id, project_id)
+                if session["kind"] != "batch_task" or session["status"] not in (
+                    "REQUESTED", "PREPARING", "READY"
+                ) or session["owner_instance"] != owner_instance:
+                    raise BrokerError(409, "Batch permit requires an owned batch task session")
             permit_id = _id()
             now = time.time()
             self.conn.execute(

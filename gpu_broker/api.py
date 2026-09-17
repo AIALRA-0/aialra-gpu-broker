@@ -53,6 +53,7 @@ class JobUpdate(BaseModel):
 class SessionCreate(BaseModel):
     request_key: str = Field(min_length=8, max_length=180)
     owner_instance: str = Field(min_length=4, max_length=128)
+    kind: Literal["realtime", "batch_task"] = "realtime"
 
 
 class SessionClose(BaseModel):
@@ -270,7 +271,7 @@ def create_app(settings: Settings, monitor: Monitor | None = None) -> FastAPI:
     @app.post("/v1/projects/{project_id}/sessions", status_code=201)
     def session_create(project_id: str, payload: SessionCreate, role: str = Depends(identity)):
         project_allowed(project_id, role)
-        return broker.request_session(project_id, payload.request_key, payload.owner_instance)
+        return broker.request_session(project_id, payload.request_key, payload.owner_instance, payload.kind)
 
     @app.get("/v1/projects/{project_id}/sessions/{session_id}")
     def session_get(project_id: str, session_id: str, role: str = Depends(identity)):
@@ -327,8 +328,24 @@ def create_app(settings: Settings, monitor: Monitor | None = None) -> FastAPI:
     def permit_reconcile(permit_id: str, payload: Reconcile, _: str = Depends(admin)):
         return broker.reconcile_permit(permit_id, payload.evidence, payload.backend_confirmed_inactive)
 
+    @app.post("/v1/projects/{project_id}/permits/{permit_id}/reconcile")
+    def project_reconcile_permit(project_id: str, permit_id: str, payload: Reconcile,
+                                 role: str = Depends(identity)):
+        project_allowed(project_id, role)
+        broker.get_permit(project_id, permit_id)
+        return broker.reconcile_permit(permit_id, payload.evidence,
+                                       payload.backend_confirmed_inactive)
+
     @app.post("/v1/admin/sessions/{session_id}/reconcile")
     def session_reconcile(session_id: str, payload: Reconcile, _: str = Depends(admin)):
         return broker.reconcile_session(session_id, payload.evidence, payload.backend_confirmed_inactive)
+
+    @app.post("/v1/projects/{project_id}/sessions/{session_id}/reconcile")
+    def project_reconcile_session(project_id: str, session_id: str, payload: Reconcile,
+                                  role: str = Depends(identity)):
+        project_allowed(project_id, role)
+        broker.get_session(project_id, session_id)
+        return broker.reconcile_session(session_id, payload.evidence,
+                                        payload.backend_confirmed_inactive)
 
     return app

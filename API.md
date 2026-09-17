@@ -12,16 +12,18 @@
 | `POST /v1/projects/{project}/jobs` | 幂等登记业务任务 | `external_id`、`idempotency_key`、`label` |
 | `GET /v1/projects/{project}/jobs/{job_id}` | 查询任务及其许可 | 无 |
 | `PATCH /v1/projects/{project}/jobs/{job_id}` | 上报业务状态 | `status`、可选 `backend_id`、`error_code` |
-| `POST /v1/projects/{project}/sessions` | 申请实时保护 | `request_key`、`owner_instance` |
+| `POST /v1/projects/{project}/sessions` | 申请实时会话或整项批处理任务保护 | `request_key`、`owner_instance`、可选 `kind`，值为 `realtime` 或 `batch_task`，默认 `realtime` |
 | `GET /v1/projects/{project}/sessions/{session_id}` | 查询实时会话 | 无 |
 | `POST /v1/projects/{project}/sessions/{session_id}/heartbeat` | 续期实时会话 | `owner_instance` |
 | `POST /v1/projects/{project}/sessions/{session_id}/ready` | 模型预热并确认可用后上报 | `owner_instance` |
 | `POST /v1/projects/{project}/sessions/{session_id}/close` | 后端确认停止后关闭 | `owner_instance`、`backend_confirmed_inactive:true` |
-| `POST /v1/projects/{project}/permits` | 申请 GPU 阶段许可 | `job_id`、`profile_id`、`request_key`、`stage`、`owner_instance`、可选 `backend_id`、`session_id` |
+| `POST /v1/projects/{project}/permits` | 申请 GPU 阶段许可 | `job_id`、`profile_id`、`request_key`、`stage`、`owner_instance`、可选 `backend_id`、`session_id`；整项任务的各阶段共用同一个 `batch_task` 会话 |
 | `GET /v1/projects/{project}/permits/{permit_id}` | 查询许可与等待原因 | 无 |
 | `POST /v1/projects/{project}/permits/{permit_id}/heartbeat` | 每 5 秒续期活跃许可 | `owner_instance`、可选 `backend_id` |
 | `POST /v1/projects/{project}/permits/{permit_id}/cancel` | 请求取消 | 无 |
 | `POST /v1/projects/{project}/permits/{permit_id}/finish` | 后端停止后结束许可 | `owner_instance`、`result`、`backend_confirmed_inactive:true`、`resident_mib` |
+| `POST /v1/projects/{project}/permits/{permit_id}/reconcile` | 本项目核销失联后的 `UNCERTAIN` 许可 | `backend_confirmed_inactive:true`、至少十字符的 `evidence`；须先按后端编号核对历史和运行／排队状态 |
+| `POST /v1/projects/{project}/sessions/{session_id}/reconcile` | 本项目核销失联后的 `UNCERTAIN` 会话 | 同上；必须先核销关联的许可，确认整项任务的后端阶段均已停止 |
 
 `jobs` 状态：`ACCEPTED`、`WAITING_GPU`、`RUNNING`、`COMMITTING`、`COMPLETED`、`FAILED`、`CANCEL_REQUESTED`、`CANCELLED`、`NEEDS_RECOVERY`。业务真相仍在原项目库，Broker 只是统一索引与审计。
 
@@ -29,7 +31,13 @@
 
 `sessions` 状态：`REQUESTED`、`PREPARING`、`READY`、`CLOSING`、`UNCERTAIN`、`CLOSED`。实时请求只有到 `PREPARING` 才开始预热；只有模型和端到端探针通过后才能报告 `READY`。
 
-典型等待原因：`WAIT_PAUSED`、`WAIT_RECONCILE`、`WAIT_TELEMETRY`、`WAIT_ACTIVE`、`WAIT_REALTIME`、`WAIT_PROJECT_OFFLINE`、`WAIT_VRAM`、`PROFILE_NOT_FIT`。客户端应把原始代码和中文说明都保留在业务事件中，方便排障。
+`batch_task` 是批处理业务任务的独占保护期，不是实时推理。它排到 `PREPARING` 后，项目确认自身任务入口准备就绪即可报告 `READY`；后续每个普通 GPU 阶段仍须单独申请并等到 `ACTIVE` 才能加载模型或提交工作流。整个任务完成前须持续续期会话，即使两阶段之间暂时没有活跃许可也不能释放；确认所有后端阶段停止后才能关闭。此类会话占用期间其他项目许可返回 `WAIT_TASK`，其阶段许可不再用静态显存增长估计作硬门槛，但仍要求遥测有效且同卡没有其他活跃许可或受保护会话。显存不足时项目只能停止并确认自己的阶段、保留任务与检查点再申请新阶段，不得抢占先到任务
+
+项目令牌只能核销本项目的 `UNCERTAIN` 记录，Broker 不转发媒体，也无法独立验证 ComfyUI 历史；这里的 `evidence` 是项目后端的核对声明，必须由实现方在请求前以原后端编号查询历史及队列，不得仅凭 GPU 占用降低释放许可。核销后的许可结果为 `RECONCILED`，与正常 `COMPLETED` 不同；业务是否成功仍由原项目依据产物、任务编号和单次发布规则决定。若后端仍运行或结果不明，保持 `UNCERTAIN`，禁止启动后续 GPU 阶段
+
+旧版未使用 `batch_task` 的客户端仍沿用原有画像门槛及许可流程；实时会话的预热规则不变。生产全局准入开关不会因本协议升级自动开启
+
+典型等待原因：`WAIT_PAUSED`、`WAIT_RECONCILE`、`WAIT_TELEMETRY`、`WAIT_ACTIVE`、`WAIT_REALTIME`、`WAIT_TASK`、`WAIT_TASK_READY`、`WAIT_PROJECT_OFFLINE`、`WAIT_VRAM`、`PROFILE_NOT_FIT`。客户端应把原始代码和中文说明都保留在业务事件中，方便排障。
 
 ## 管理接口
 

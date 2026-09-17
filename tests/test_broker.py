@@ -201,6 +201,45 @@ def test_realtime_prepares_after_batch_and_protects_session(settings):
         broker.stop()
 
 
+def test_batch_task_keeps_exclusive_turn_between_stages(settings):
+    monitor = FakeMonitor()
+    monitor.used = 15000
+    broker = Broker(settings, monitor)
+    try:
+        broker.start()
+        h3_profile = broker.create_profile("minimax", "H3 measured estimate", "batch", 5000, 1800)
+        other_profile = broker.create_profile("manga", "Other batch", "batch", 2000, 1800)
+        broker.set_allocation(True)
+        broker.project_heartbeat("minimax", "h3-worker", "online", 0)
+        session = broker.request_session("minimax", "whole-h3-task", "h3-worker", "batch_task")
+        assert session["status"] == "PREPARING"
+        session = broker.session_ready("minimax", session["id"], "h3-worker")
+        assert session["kind"] == "batch_task" and session["status"] == "READY"
+        job = broker.register_job("minimax", "whole-task", "whole-task-idem", "whole-task")
+        first = broker.request_permit("minimax", job["id"], h3_profile["id"],
+                                      "first-stage", "video", "h3-worker", None, session["id"])
+        # Only the task owns the GPU; a stale static peak must not reject it.
+        assert first["status"] == "ACTIVE"
+        broker.project_heartbeat("manga", "other-worker", "online", 0)
+        other_job = broker.register_job("manga", "later-task", "later-task-idem", "later-task")
+        later = broker.request_permit("manga", other_job["id"], other_profile["id"],
+                                      "later-stage", "image", "other-worker", None, None)
+        assert later["status"] == "WAITING"
+        broker.finish_permit("minimax", first["id"], "h3-worker", "COMPLETED", True, 0)
+        assert broker.get_permit("manga", later["id"])["reason"] == "WAIT_TASK"
+        second = broker.request_permit("minimax", job["id"], h3_profile["id"],
+                                       "second-stage", "video", "h3-worker", None, session["id"])
+        assert second["status"] == "ACTIVE"
+        broker.finish_permit("minimax", second["id"], "h3-worker", "COMPLETED", True, 0)
+        assert broker.get_permit("manga", later["id"])["status"] == "WAITING"
+        monitor.used = 1000
+        broker.poll()
+        broker.close_session("minimax", session["id"], "h3-worker", True)
+        assert broker.get_permit("manga", later["id"])["status"] == "ACTIVE"
+    finally:
+        broker.stop()
+
+
 def test_stalled_realtime_preparation_freezes_grants(settings):
     broker = Broker(replace(settings, session_prepare_timeout_seconds=1), FakeMonitor())
     try:
@@ -245,6 +284,34 @@ def test_configured_public_origin_accepts_admin_write(settings):
         assert client.post("/v1/admin/allocation", json={"enabled": True}, headers=headers).status_code == 200
         assert client.post("/v1/admin/allocation", json={"enabled": False},
             headers={**headers, "Origin": "https://other.example.org"}).status_code == 403
+
+
+def test_project_can_reconcile_only_its_own_confirmed_inactive_task(settings):
+    app = create_app(settings, FakeMonitor())
+    with TestClient(app) as client:
+        broker = app.state.broker
+        profile = broker.create_profile("minimax", "H3", "batch", 4000, 1800)
+        broker.set_allocation(True)
+        broker.project_heartbeat("minimax", "h3-worker", "online", 0)
+        session = broker.request_session("minimax", "recovery-session", "h3-worker", "batch_task")
+        broker.session_ready("minimax", session["id"], "h3-worker")
+        job = broker.register_job("minimax", "recovery-job", "recovery-idem", "recovery")
+        permit = broker.request_permit("minimax", job["id"], profile["id"],
+                                       "recovery-stage", "video", "h3-worker", None, session["id"])
+        with broker.transaction():
+            broker.conn.execute("UPDATE permits SET status='UNCERTAIN' WHERE id=?", (permit["id"],))
+            broker.conn.execute("UPDATE sessions SET status='UNCERTAIN' WHERE id=?", (session["id"],))
+        payload = {"backend_confirmed_inactive": True,
+                   "evidence": "Comfy history finished and queue empty for exact backend UUID"}
+        wrong = {"Authorization": "Bearer manga-test-token"}
+        own = {"Authorization": "Bearer mini-test-token"}
+        permit_url = f"/v1/projects/minimax/permits/{permit['id']}/reconcile"
+        session_url = f"/v1/projects/minimax/sessions/{session['id']}/reconcile"
+        assert client.post(permit_url, json=payload, headers=wrong).status_code == 403
+        assert client.post(permit_url, json={**payload, "backend_confirmed_inactive": False},
+                           headers=own).status_code == 422
+        assert client.post(permit_url, json=payload, headers=own).json()["status"] == "FINISHED"
+        assert client.post(session_url, json=payload, headers=own).json()["status"] == "CLOSED"
 
 
 def test_monitor_falls_back_when_nvml_read_fails(monkeypatch):
