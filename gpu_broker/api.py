@@ -190,6 +190,12 @@ def create_app(settings: Settings, monitor: Monitor | None = None) -> FastAPI:
             "allocation_enabled": broker._allocation_enabled(),
         }
 
+    @app.get("/v1/ready")
+    def ready():
+        snapshot = broker._snapshot
+        healthy = bool(snapshot and snapshot.get("ok") and broker._managed_card(__import__("time").time()))
+        return JSONResponse({"ready": healthy}, status_code=200 if healthy else 503)
+
     @app.get("/v1/me")
     def me(role: str = Depends(identity)):
         return {"role": role}

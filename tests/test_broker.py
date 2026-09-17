@@ -220,10 +220,15 @@ def test_stalled_realtime_preparation_freezes_grants(settings):
 
 
 def test_api_auth_and_static(settings):
-    app = create_app(settings, FakeMonitor())
+    monitor = FakeMonitor()
+    app = create_app(settings, monitor)
     with TestClient(app) as client:
         assert client.get("/").status_code == 200
         assert client.get("/static/app.js").status_code == 200
+        assert client.get("/v1/ready").status_code == 200
+        monitor.ok = False
+        app.state.broker.poll()
+        assert client.get("/v1/ready").status_code == 503
         assert client.get("/v1/dashboard").status_code == 401
         assert client.get("/v1/dashboard", headers={"Authorization": "Bearer mini-test-token"}).status_code == 403
         response = client.get("/v1/dashboard", headers={"Authorization": "Bearer admin-test-token"})
