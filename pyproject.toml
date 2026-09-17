@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aialra-gpu-broker"
+version = "0.1.0"
+description = "Local Windows GPU admission and observability service"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.135.1",
+  "uvicorn==0.41.0",
+  "pydantic==2.12.5",
+  "nvidia-ml-py==13.610.43",
+  "psutil==7.0.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest==8.4.2", "httpx==0.28.1"]
+
+[project.scripts]
+gpu-broker = "gpu_broker.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["gpu_broker*"]
+
+[tool.setuptools.package-data]
+gpu_broker = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+artifacts/
+*.egg-info/
+.local-data/
+deploy/private/
+source/
+GPU_BROKER_DEPLOYMENT_REVIEW_2026-09-16.md
+IMPLEMENTATION_STATUS_2026-09-16.md
+tools/verify_ui.py
