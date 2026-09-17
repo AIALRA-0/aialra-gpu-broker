@@ -1,0 +1,19 @@
+INTEGRATION_PROMPTS.md
+  s_d8a6c2c7869d89::t_573b631c27c7bb 3,11-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aa99e541d9288cc3882c1714862d85448f2b4b57",
+  "prompts": {},
+  "sessions": {
+    "s_d8a6c2c7869d89": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ac66-5ced-79f0-8a2d-3451930b38e6",
+        "model": "unknown"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    }
+  }
+}
