@@ -1,0 +1,49 @@
+DEPLOYMENT.md
+  s_d8a6c2c7869d89::t_27bd98092a59eb 17-18,29-30,61
+  s_7e23799dc317a2::t_2d890d5c8b5eea 62
+gpu_broker/api.py
+  s_d8a6c2c7869d89::t_2c038a7b3e5ae4 6,101,106,113-116
+GPU_CALL_REVIEW_2026-09-22.md
+  s_d8a6c2c7869d89::t_cce762edd0d539 1-7,9-32,35-54,58
+  s_d8a6c2c7869d89::t_607a86130d284b 59
+  s_d8a6c2c7869d89::t_c8948532c4f1cf 8,56-57
+  s_d8a6c2c7869d89::t_97b7439a397bcc 33-34,55
+tests/test_broker.py
+  s_d8a6c2c7869d89::t_437a922636eada 4,325-349
+deploy/Install-UserStartup.ps1
+  s_d8a6c2c7869d89::t_46f65f8ce88f23 32-35
+  s_d8a6c2c7869d89::t_d1a1d476ed1904 38,48
+deploy/Run-GpuBroker.ps1
+  s_d8a6c2c7869d89::t_e80729ea68685f 12-20,30,43,46
+  s_d8a6c2c7869d89::t_46f65f8ce88f23 4-5,10-11,21-29,31-42,44-45,47-48
+deploy/Install-PrivateTunnel.ps1
+  s_d8a6c2c7869d89::t_46f65f8ce88f23 15-18
+gpu_broker/core.py
+  s_d8a6c2c7869d89::t_cf70567f107c5e 177-181
+INTEGRATION_PROMPTS.md
+  s_d8a6c2c7869d89::t_abed78498f235a 1,3,5,7,10,12,14,16,19,22,24,27,30,32,35,38,40,43,45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d4fbe244eac92c93398336ba5db2e91672432ec2",
+  "prompts": {},
+  "sessions": {
+    "s_7e23799dc317a2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ad52-c35f-7882-a496-5c0fabb841af",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    },
+    "s_d8a6c2c7869d89": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ac66-5ced-79f0-8a2d-3451930b38e6",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    }
+  }
+}
