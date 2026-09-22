@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Literal
@@ -97,17 +98,22 @@ def create_app(settings: Settings, monitor: Monitor | None = None) -> FastAPI:
 
     async def polling() -> None:
         counter = 0
+        last_failure_log = 0.0
         while True:
             await asyncio.sleep(settings.sample_interval_seconds)
             try:
                 await asyncio.to_thread(broker.poll)
+                last_failure_log = 0.0
                 counter += 1
                 if counter % 900 == 0:
                     await asyncio.to_thread(broker.maintenance)
             except Exception:
                 # A failed poll does not turn an old GPU reading into free capacity.
                 # The freshness check stops grants until a valid sample is available.
-                logger.exception("GPU broker poll failed; fresh telemetry is required for grants")
+                now = time.monotonic()
+                if last_failure_log == 0.0 or now - last_failure_log >= 60.0:
+                    logger.exception("GPU broker poll failed; fresh telemetry is required for grants")
+                    last_failure_log = now
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

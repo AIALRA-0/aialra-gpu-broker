@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import threading
 from dataclasses import replace
 
 import pytest
@@ -321,3 +322,28 @@ def test_monitor_falls_back_when_nvml_read_fails(monkeypatch):
     monkeypatch.setattr(monitor, "_read_smi", lambda: [{"uuid": GPU, "used_mib": 1}])
     result = monitor.read()
     assert result["ok"] is True and result["source"] == "nvidia-smi"
+
+
+def test_transaction_preserves_error_after_sqlite_cancels_transaction():
+    class CancelledConnection:
+        def __init__(self):
+            self.in_transaction = False
+            self.statements = []
+
+        def execute(self, statement):
+            self.statements.append(statement)
+            if statement == "BEGIN IMMEDIATE":
+                self.in_transaction = True
+
+    broker = object.__new__(Broker)
+    broker._lock = threading.RLock()
+    broker.conn = CancelledConnection()
+
+    with pytest.raises(RuntimeError, match="original disk full"):
+        with broker.transaction():
+            # Fatal SQLite I/O errors may end the transaction before Python's
+            # context manager receives the exception.
+            broker.conn.in_transaction = False
+            raise RuntimeError("original disk full")
+
+    assert broker.conn.statements == ["BEGIN IMMEDIATE"]

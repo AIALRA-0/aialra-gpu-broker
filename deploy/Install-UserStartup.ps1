@@ -29,9 +29,13 @@ $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -RepoRoot "{1}" -Da
 $action = New-ScheduledTaskAction -Execute $powershellExe -Argument $arguments -WorkingDirectory $RepoRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User ([Security.Principal.WindowsIdentity]::GetCurrent().Name)
 $principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
+    -MultipleInstances IgnoreNew -StartWhenAvailable `
+    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Local GPU admission and monitoring; listens only on 127.0.0.1' -Force | Out-Null
 Start-ScheduledTask -TaskName $TaskName
+$health = $null
 for ($attempt = 0; $attempt -lt 10; $attempt++) {
     Start-Sleep -Milliseconds 500
     try {
@@ -41,9 +45,7 @@ for ($attempt = 0; $attempt -lt 10; $attempt++) {
 }
 if ($null -eq $health -or $health.running -ne $true -or (Get-ScheduledTask -TaskName $TaskName).State -ne 'Running') {
     $lastResult = (Get-ScheduledTaskInfo -TaskName $TaskName).LastTaskResult
-    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-    throw "Task startup did not pass the health check (last result $lastResult). The failed task was removed."
+    throw "Task startup did not pass the health check (last result $lastResult). The registered supervisor will keep retrying; inspect service.log."
 }
 Write-Output "Installed and started user-logon task: $TaskName"
 Write-Output "Dashboard: http://127.0.0.1:$Port/"

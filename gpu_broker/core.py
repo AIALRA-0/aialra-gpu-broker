@@ -174,7 +174,11 @@ class Broker:
             try:
                 yield
             except BaseException:
-                self.conn.execute("ROLLBACK")
+                # SQLite can cancel a transaction itself after a fatal I/O or
+                # disk-full error. Preserve that original exception instead of
+                # hiding it behind "cannot rollback - no transaction is active".
+                if self.conn.in_transaction:
+                    self.conn.execute("ROLLBACK")
                 raise
             else:
                 self.conn.execute("COMMIT")
