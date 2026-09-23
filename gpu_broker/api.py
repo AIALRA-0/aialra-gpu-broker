@@ -33,6 +33,7 @@ class ProfileCreate(BaseModel):
     kind: Literal["realtime", "batch"]
     peak_growth_mib: int = Field(gt=0, le=65536)
     max_seconds: int = Field(gt=0, le=86400)
+    respect_vram: bool = False
 
 
 class ProfileUpdate(BaseModel):
@@ -247,7 +248,7 @@ def create_app(settings: Settings, monitor: Monitor | None = None) -> FastAPI:
     def create_profile(payload: ProfileCreate, _: str = Depends(admin)):
         return broker.create_profile(
             payload.project_id, payload.label, payload.kind,
-            payload.peak_growth_mib, payload.max_seconds,
+            payload.peak_growth_mib, payload.max_seconds, payload.respect_vram,
         )
 
     @app.patch("/v1/profiles/{profile_id}")

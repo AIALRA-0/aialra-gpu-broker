@@ -7,7 +7,7 @@
 
 The broker records jobs, resource profiles, permits, realtime sessions, and recovery decisions. Its local dashboard shows GPU telemetry, queue reasons, project heartbeats, job states, and events.
 
-The current adapters target `minimax`, `live_translate`, and `manga`. Other projects need corresponding configuration and API validation changes. Device identifiers, credentials, job data, and private server configuration are not part of this repository.
+The broker currently reserves project identities and API routes for `minimax`, `live_translate`, and `manga`. Their client integrations and real-task acceptance are still in progress; a dashboard heartbeat does not prove that GPU calls are gated. Other projects need corresponding configuration and API validation changes. Device identifiers, credentials, job data, and private server configuration are not part of this repository.
 
 ## 1 Requirements
 

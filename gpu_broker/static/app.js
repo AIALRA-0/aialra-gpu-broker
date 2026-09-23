@@ -66,7 +66,7 @@ function render(data) {
   $("modeBadge").className = `pill ${data.counts.uncertain || !fresh ? "red-pill" : data.allocation_enabled ? "green-pill" : "amber-pill"}`;
   $("scheduleMode").textContent = mode;
   $("scheduleMode").className = $("modeBadge").className;
-  $("modeDescription").textContent = data.counts.uncertain ? "有状态待核实。新任务准入已冻结，先确认后端停止。" : !fresh ? "受管 GPU 遥测不可用或过期，新的 GPU 许可不会发放。" : data.allocation_enabled ? "已启用准入；仅在资源、安全余量和优先级均允许时发放。" : "目前只监控，不发放新的 GPU 许可。";
+  $("modeDescription").textContent = data.counts.uncertain ? "有状态待核实。新任务准入已冻结，先确认后端停止。" : !fresh ? "受管 GPU 遥测不可用或过期，新的 GPU 许可不会发放。" : data.allocation_enabled ? "仅对已接入的项目调用发放许可；未接入路径仍可绕过。" : "目前只监控，不发放新的 GPU 许可；项目调用尚未统一受控。";
   $("allocationButton").disabled = false;
   $("allocationButton").textContent = data.allocation_enabled ? "暂停新准入" : "启用 GPU 准入";
   $("allocationButton").className = data.allocation_enabled ? "danger-button" : "primary-button";
@@ -117,7 +117,7 @@ function renderProjects(data, now) {
     const jobs = data.jobs.filter((j) => j.project_id === p.id && !["COMPLETED", "FAILED", "CANCELLED"].includes(j.status)).length;
     const allocated = data.permits.filter((permit) => permit.project_id === p.id && ["ACTIVE", "CANCEL_REQUESTED"].includes(permit.status)).reduce((sum, permit) => sum + permit.peak_growth_mib, 0);
     const queued = data.permits.filter((permit) => permit.project_id === p.id && permit.status === "WAITING").length;
-    return `<article class="panel project-card"><div class="project-head"><span class="project-icon">${esc((p.label || p.id).charAt(0))}</span><span class="pill ${online ? "green-pill" : "muted-pill"}">${online ? "已连接" : "未接入 / 离线"}</span></div><h3>${esc(p.label)}</h3><p>${online ? `上次心跳 ${esc(shortClock(p.last_seen))} · ${esc(p.reported_status || "online")}` : "等待项目发送心跳和任务状态"}</p><div class="project-stats"><div><span>未完成任务</span><strong>${n(jobs)}</strong></div><div><span>排队许可</span><strong>${n(queued)}</strong></div><div><span>当前获准增长</span><strong>${mib(allocated)}</strong></div><div><span>项目报告常驻</span><strong>${online ? mib(p.reported_resident_mib) : "—"}</strong></div><div><span>累计许可时间</span><strong>${n(Math.round(p.usage_seconds / 60))} 分钟</strong></div><div><span>调度权重</span><strong>${n(p.weight)}</strong></div></div></article>`;
+    return `<article class="panel project-card"><div class="project-head"><span class="project-icon">${esc((p.label || p.id).charAt(0))}</span><span class="pill ${online ? "green-pill" : "muted-pill"}">${online ? "心跳正常" : "无近期心跳"}</span></div><h3>${esc(p.label)}</h3><p>${online ? `上次心跳 ${esc(shortClock(p.last_seen))} · ${esc(p.reported_status || "online")}` : "等待项目发送心跳和任务状态"}</p><div class="project-stats"><div><span>未完成任务</span><strong>${n(jobs)}</strong></div><div><span>排队许可</span><strong>${n(queued)}</strong></div><div><span>当前获准增长</span><strong>${mib(allocated)}</strong></div><div><span>项目报告常驻</span><strong>${online ? mib(p.reported_resident_mib) : "—"}</strong></div><div><span>累计许可时间</span><strong>${n(Math.round(p.usage_seconds / 60))} 分钟</strong></div><div><span>调度权重</span><strong>${n(p.weight)}</strong></div></div></article>`;
   }).join("");
 }
 function renderJobs(data) {
@@ -132,7 +132,7 @@ function renderJobs(data) {
   }).join("") + unpermitted.join("") : `<tr><td colspan="6" class="empty-cell">${data.jobs.length ? "此筛选没有许可记录" : "项目接入后会在这里显示任务；当前没有项目上报"}</td></tr>`;
 }
 function renderProfiles(data) {
-  $("profilesTable").innerHTML = data.profiles.length ? data.profiles.map((p) => `<tr><td><span class="cell-title">${esc(p.label)}</span><span class="cell-sub mono">${esc(p.id.slice(0, 8))}</span></td><td>${esc(projectName[p.project_id] || p.project_id)}</td><td>${p.kind === "realtime" ? "实时会话" : "批处理"}</td><td>+${mib(p.peak_growth_mib)}</td><td>${n(p.max_seconds)} 秒</td><td>${p.enabled ? badge("ACTIVE") : badge("CLOSED")}</td><td><button class="action-button" data-id="${esc(p.id)}" data-enabled="${p.enabled ? "1" : "0"}">${p.enabled ? "停用" : "启用"}</button></td></tr>`).join("") : "<tr><td colspan='7' class='empty-cell'>暂无画像；接入前请按实测峰值创建</td></tr>";
+  $("profilesTable").innerHTML = data.profiles.length ? data.profiles.map((p) => `<tr><td><span class="cell-title">${esc(p.label)}</span><span class="cell-sub mono">${esc(p.id.slice(0, 8))}</span></td><td>${esc(projectName[p.project_id] || p.project_id)}</td><td>${p.kind === "realtime" ? "实时会话" : "批处理"}</td><td>+${mib(p.peak_growth_mib)}</td><td>${n(p.max_seconds)} 秒</td><td>${p.respect_vram ? "开启" : "默认关闭"}</td><td>${p.enabled ? badge("ACTIVE") : badge("CLOSED")}</td><td><button class="action-button" data-id="${esc(p.id)}" data-enabled="${p.enabled ? "1" : "0"}">${p.enabled ? "停用" : "启用"}</button></td></tr>`).join("") : "<tr><td colspan='8' class='empty-cell'>暂无画像；接入前请按实测峰值创建</td></tr>";
 }
 function renderEvents(data) {
   $("eventList").className = data.events.length ? "event-list" : "event-list empty-state";
@@ -146,11 +146,19 @@ $("tokenButton").addEventListener("click", () => { $("adminToken").value = ""; m
 $("refreshButton").addEventListener("click", refresh);
 $("historyWindow").addEventListener("change", () => { state.historyAt = 0; refresh(); });
 $("jobFilter").addEventListener("change", () => state.dashboard && renderJobs(state.dashboard));
-$("allocationButton").addEventListener("click", async () => { if (!state.dashboard) return; try { await mutate("/v1/admin/allocation", { enabled: !state.dashboard.allocation_enabled }); toast(state.dashboard.allocation_enabled ? "已启用 GPU 准入" : "已暂停新准入"); } catch (e) { toast(e.message, true); } });
+$("allocationButton").addEventListener("click", async () => {
+  if (!state.dashboard) return;
+  const enabled = !state.dashboard.allocation_enabled;
+  if (enabled && !window.confirm("启用后，已接入项目可获得 GPU 许可。请先确认未纳管的 GPU 调用已停止，资源画像和模型释放已验证。继续启用？")) return;
+  try {
+    await mutate("/v1/admin/allocation", { enabled });
+    toast(enabled ? "已启用 GPU 准入" : "已暂停新准入");
+  } catch (e) { toast(e.message, true); }
+});
 $("backupButton").addEventListener("click", async () => { try { const result = await mutate("/v1/admin/backup"); toast(`备份已保存：${result.path}`); } catch (e) { toast(e.message, true); } });
 $("doctorButton").addEventListener("click", async () => { try { const result = await api("/v1/admin/doctor"); $("infoBody").textContent = JSON.stringify(result, null, 2); modal("infoModal", true); } catch (e) { toast(e.message, true); } });
 $("newProfileButton").addEventListener("click", () => modal("profileModal", true));
-$("profileForm").addEventListener("submit", async (e) => { e.preventDefault(); try { await api("/v1/profiles", { method: "POST", body: JSON.stringify({ project_id: $("profileProject").value, label: $("profileLabel").value.trim(), kind: $("profileKind").value, peak_growth_mib: Number($("profileMemory").value), max_seconds: Number($("profileSeconds").value) }) }); modal("profileModal", false); e.target.reset(); await refresh(); toast("资源画像已创建"); } catch (err) { toast(err.message, true); } });
+$("profileForm").addEventListener("submit", async (e) => { e.preventDefault(); try { await api("/v1/profiles", { method: "POST", body: JSON.stringify({ project_id: $("profileProject").value, label: $("profileLabel").value.trim(), kind: $("profileKind").value, peak_growth_mib: Number($("profileMemory").value), max_seconds: Number($("profileSeconds").value), respect_vram: $("profileRespectVram").checked }) }); modal("profileModal", false); e.target.reset(); await refresh(); toast("资源画像已创建"); } catch (err) { toast(err.message, true); } });
 $("jobsTable").addEventListener("click", async (e) => { const button = e.target.closest("button[data-action]"); if (!button) return; const id = button.dataset.id; if (button.dataset.action === "reconcile-permit") { state.reconcile = { type: "permits", id }; modal("reconcileModal", true); } else if (button.dataset.action === "cancel-job") { try { await mutate(`/v1/admin/jobs/${encodeURIComponent(id)}/cancel`); toast("业务任务取消请求已登记；运行中后端仍须确认停止"); } catch (err) { toast(err.message, true); } } });
 $("scheduleBody").addEventListener("click", (e) => { const button = e.target.closest('button[data-action="reconcile-session"]'); if (!button) return; state.reconcile = { type: "sessions", id: button.dataset.id }; modal("reconcileModal", true); });
 $("profilesTable").addEventListener("click", async (e) => { const button = e.target.closest("button[data-id]"); if (!button) return; try { await api(`/v1/profiles/${encodeURIComponent(button.dataset.id)}`, { method: "PATCH", body: JSON.stringify({ enabled: button.dataset.enabled !== "1" }) }); await refresh(); toast("画像状态已更新"); } catch (err) { toast(err.message, true); } });

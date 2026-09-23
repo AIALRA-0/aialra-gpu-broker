@@ -23,6 +23,12 @@ def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+def _profile_row(row: sqlite3.Row) -> dict[str, Any]:
+    profile = dict(row)
+    profile["respect_vram"] = bool(profile["respect_vram"])
+    return profile
+
+
 class BrokerError(Exception):
     def __init__(self, status_code: int, message: str):
         super().__init__(message)
@@ -95,7 +101,7 @@ class Broker:
 
     def _schema(self) -> None:
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-        if version > 2:
+        if version > 3:
             raise RuntimeError(f"Database schema {version} is newer than this broker")
         self.conn.executescript(
             """
@@ -113,6 +119,7 @@ class Broker:
                 label TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('realtime','batch')),
                 peak_growth_mib INTEGER NOT NULL CHECK(peak_growth_mib > 0),
                 max_seconds INTEGER NOT NULL CHECK(max_seconds > 0),
+                respect_vram INTEGER NOT NULL DEFAULT 0 CHECK(respect_vram IN (0,1)),
                 enabled INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL
             );
             CREATE TABLE IF NOT EXISTS jobs (
@@ -159,13 +166,18 @@ class Broker:
         )
         if "kind" not in {row[1] for row in self.conn.execute("PRAGMA table_info(sessions)")}:
             self.conn.execute("ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'realtime'")
+        if "respect_vram" not in {row[1] for row in self.conn.execute("PRAGMA table_info(profiles)")}:
+            self.conn.execute(
+                "ALTER TABLE profiles ADD COLUMN respect_vram INTEGER NOT NULL DEFAULT 0 "
+                "CHECK(respect_vram IN (0,1))"
+            )
         with self.transaction():
             for project, label in PROJECTS.items():
                 self.conn.execute(
                     "INSERT OR IGNORE INTO projects(id,label) VALUES (?,?)", (project, label)
                 )
             self.conn.execute("INSERT OR IGNORE INTO meta(key,value) VALUES ('allocation_enabled','0')")
-            self.conn.execute("PRAGMA user_version=2")
+            self.conn.execute("PRAGMA user_version=3")
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -441,7 +453,7 @@ class Broker:
         if session is not None:
             self._all_waiting("WAIT_TASK" if session["kind"] == "batch_task" else "WAIT_REALTIME")
             waiting = self.conn.execute(
-                "SELECT p.*, profiles.peak_growth_mib, profiles.max_seconds, "
+                "SELECT p.*, profiles.peak_growth_mib, profiles.max_seconds, profiles.respect_vram, "
                 "jobs.project_id, projects.last_seen, projects.instance_id, projects.enabled "
                 "FROM permits p JOIN profiles ON profiles.id=p.profile_id "
                 "JOIN jobs ON jobs.id=p.job_id JOIN projects ON projects.id=jobs.project_id "
@@ -453,7 +465,7 @@ class Broker:
             return
 
         waiting = self.conn.execute(
-            "SELECT p.*, profiles.peak_growth_mib, profiles.max_seconds, "
+            "SELECT p.*, profiles.peak_growth_mib, profiles.max_seconds, profiles.respect_vram, "
             "jobs.project_id, projects.last_seen, projects.instance_id, projects.enabled, "
             "projects.usage_seconds, projects.weight "
             "FROM permits p JOIN profiles ON profiles.id=p.profile_id "
@@ -483,7 +495,7 @@ class Broker:
         if exclusive_task and task_session["status"] != "READY":
             self._reason(permit["id"], "WAIT_TASK_READY")
             return False
-        if not exclusive_task:
+        if not exclusive_task or bool(permit["respect_vram"]):
             safety = max(self.settings.safety_floor_mib, int(card["total_mib"] * self.settings.safety_ratio))
             if permit["peak_growth_mib"] + safety > card["total_mib"]:
                 self._reason(permit["id"], "PROFILE_NOT_FIT")
@@ -575,7 +587,8 @@ class Broker:
             return self._project(project_id)
 
     def create_profile(
-        self, project_id: str, label: str, kind: str, peak_growth_mib: int, max_seconds: int
+        self, project_id: str, label: str, kind: str, peak_growth_mib: int, max_seconds: int,
+        respect_vram: bool = False,
     ) -> dict:
         if kind not in ("realtime", "batch") or peak_growth_mib <= 0 or max_seconds <= 0:
             raise BrokerError(422, "Invalid profile resource bounds")
@@ -583,12 +596,15 @@ class Broker:
             self._project(project_id)
             profile_id = _id()
             self.conn.execute(
-                "INSERT INTO profiles(id,project_id,label,kind,peak_growth_mib,max_seconds,created_at) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (profile_id, project_id, label[:120], kind, peak_growth_mib, max_seconds, time.time()),
+                "INSERT INTO profiles(id,project_id,label,kind,peak_growth_mib,max_seconds,respect_vram,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (profile_id, project_id, label[:120], kind, peak_growth_mib, max_seconds,
+                 int(bool(respect_vram)), time.time()),
             )
             self._event("PROFILE_CREATED", project_id=project_id, detail={"profile_id": profile_id})
-            return self._one("SELECT * FROM profiles WHERE id=?", (profile_id,))
+            return _profile_row(self.conn.execute(
+                "SELECT * FROM profiles WHERE id=?", (profile_id,)
+            ).fetchone())
 
     def update_profile(self, profile_id: str, enabled: bool) -> dict:
         with self.transaction():
@@ -600,7 +616,9 @@ class Broker:
                 raise BrokerError(409, "Profile has unfinished permits")
             self.conn.execute("UPDATE profiles SET enabled=? WHERE id=?", (int(enabled), profile_id))
             self._event("PROFILE_UPDATED", project_id=profile["project_id"], detail={"profile_id": profile_id, "enabled": enabled})
-            return self._one("SELECT * FROM profiles WHERE id=?", (profile_id,))
+            return _profile_row(self.conn.execute(
+                "SELECT * FROM profiles WHERE id=?", (profile_id,)
+            ).fetchone())
 
     def register_job(
         self, project_id: str, external_id: str, idempotency_key: str, label: str
@@ -957,7 +975,10 @@ class Broker:
             now = time.time()
             self._tick_readonly_guard(now)
             projects = [dict(row) for row in self.conn.execute("SELECT * FROM projects ORDER BY id")]
-            profiles = [dict(row) for row in self.conn.execute("SELECT * FROM profiles ORDER BY created_at DESC")]
+            profiles = [
+                _profile_row(row)
+                for row in self.conn.execute("SELECT * FROM profiles ORDER BY created_at DESC")
+            ]
             jobs = [dict(row) for row in self.conn.execute(
                 "SELECT * FROM jobs ORDER BY CASE WHEN status IN ('COMPLETED','FAILED','CANCELLED') "
                 "THEN 1 ELSE 0 END, updated_at DESC LIMIT 200"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import threading
+import sqlite3
 from dataclasses import replace
 
 import pytest
@@ -74,6 +75,42 @@ def test_paused_serial_idempotent_and_fair(settings):
         broker.update_job("minimax", job1["id"], "COMPLETED", None, None)
         assert broker.request_permit("minimax", job1["id"], profile["id"],
             "permit-task-1", "inference", "worker-a", None, None)["id"] == permit1["id"]
+    finally:
+        broker.stop()
+
+
+def test_three_projects_share_one_active_gpu_turn(settings):
+    broker = Broker(settings, FakeMonitor())
+    try:
+        broker.start()
+        profiles = {
+            project: broker.create_profile(project, project, "batch", 2000, 120)
+            for project in ("minimax", "live_translate", "manga")
+        }
+        broker.set_allocation(True)
+        jobs_and_permits = {
+            project: setup_job(
+                broker, project, profiles[project], f"worker-{project}", f"task-{project}"
+            )
+            for project in ("minimax", "live_translate", "manga")
+        }
+        h3 = jobs_and_permits["minimax"][1]
+        live = jobs_and_permits["live_translate"][1]
+        manga = jobs_and_permits["manga"][1]
+        assert broker.get_permit("minimax", h3["id"])["status"] == "ACTIVE"
+        assert broker.get_permit("live_translate", live["id"])["status"] == "WAITING"
+        assert broker.get_permit("manga", manga["id"])["status"] == "WAITING"
+
+        broker.finish_permit("minimax", h3["id"], "worker-minimax", "COMPLETED", True, 0)
+        remaining = [("live_translate", live), ("manga", manga)]
+        statuses = [broker.get_permit(project, permit["id"])["status"] for project, permit in remaining]
+        assert sorted(statuses) == ["ACTIVE", "WAITING"]
+        first_project, first_permit = remaining[statuses.index("ACTIVE")]
+        second_project, second_permit = remaining[statuses.index("WAITING")]
+        broker.finish_permit(
+            first_project, first_permit["id"], f"worker-{first_project}", "COMPLETED", True, 0
+        )
+        assert broker.get_permit(second_project, second_permit["id"])["status"] == "ACTIVE"
     finally:
         broker.stop()
 
@@ -210,6 +247,7 @@ def test_batch_task_keeps_exclusive_turn_between_stages(settings):
         broker.start()
         h3_profile = broker.create_profile("minimax", "H3 measured estimate", "batch", 5000, 1800)
         other_profile = broker.create_profile("manga", "Other batch", "batch", 2000, 1800)
+        assert h3_profile["respect_vram"] is False
         broker.set_allocation(True)
         broker.project_heartbeat("minimax", "h3-worker", "online", 0)
         session = broker.request_session("minimax", "whole-h3-task", "h3-worker", "batch_task")
@@ -237,6 +275,64 @@ def test_batch_task_keeps_exclusive_turn_between_stages(settings):
         broker.poll()
         broker.close_session("minimax", session["id"], "h3-worker", True)
         assert broker.get_permit("manga", later["id"])["status"] == "ACTIVE"
+    finally:
+        broker.stop()
+
+
+def test_batch_task_profile_can_require_live_vram_capacity(settings):
+    monitor = FakeMonitor()
+    monitor.used = 10000
+    broker = Broker(settings, monitor)
+    try:
+        broker.start()
+        profile = broker.create_profile(
+            "minimax", "H3 guarded experiment", "batch", 5000, 1800, respect_vram=True
+        )
+        broker.set_allocation(True)
+        broker.project_heartbeat("minimax", "h3-worker", "online", 0)
+        session = broker.request_session("minimax", "guarded-task", "h3-worker", "batch_task")
+        session = broker.session_ready("minimax", session["id"], "h3-worker")
+        job = broker.register_job("minimax", "guarded-job", "guarded-job-idem", "guarded job")
+        permit = broker.request_permit("minimax", job["id"], profile["id"],
+                                       "guarded-stage", "video", "h3-worker", None, session["id"])
+
+        # 10,000 used + 5,000 peak + 2,048 safety exceeds 16,000 total.
+        assert permit["status"] == "WAITING"
+        assert permit["reason"] == "WAIT_VRAM"
+
+        monitor.used = 1000
+        broker.poll()
+        assert broker.get_permit("minimax", permit["id"])["status"] == "ACTIVE"
+    finally:
+        broker.stop()
+
+
+def test_old_database_adds_respect_vram_with_legacy_default(settings):
+    with sqlite3.connect(settings.db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE projects (id TEXT PRIMARY KEY, label TEXT NOT NULL);
+            INSERT INTO projects(id,label) VALUES ('minimax','MiniMax H3');
+            CREATE TABLE profiles (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+                label TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('realtime','batch')),
+                peak_growth_mib INTEGER NOT NULL CHECK(peak_growth_mib > 0),
+                max_seconds INTEGER NOT NULL CHECK(max_seconds > 0),
+                enabled INTEGER NOT NULL DEFAULT 1, created_at REAL NOT NULL
+            );
+            INSERT INTO profiles(id,project_id,label,kind,peak_growth_mib,max_seconds,created_at)
+                VALUES ('legacy-profile','minimax','Legacy','batch',4000,1800,1);
+            PRAGMA user_version=2;
+            """
+        )
+
+    broker = Broker(settings, FakeMonitor())
+    try:
+        legacy = broker._one("SELECT * FROM profiles WHERE id='legacy-profile'")
+        assert legacy["respect_vram"] == 0
+        assert broker.conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        created = broker.create_profile("minimax", "New default", "batch", 4000, 1800)
+        assert created["respect_vram"] is False
     finally:
         broker.stop()
 
@@ -285,6 +381,33 @@ def test_configured_public_origin_accepts_admin_write(settings):
         assert client.post("/v1/admin/allocation", json={"enabled": True}, headers=headers).status_code == 200
         assert client.post("/v1/admin/allocation", json={"enabled": False},
             headers={**headers, "Origin": "https://other.example.org"}).status_code == 403
+
+
+def test_admin_can_create_profile_that_checks_live_vram(settings):
+    app = create_app(settings, FakeMonitor())
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/profiles",
+            json={"project_id": "minimax", "label": "guarded experiment", "kind": "batch",
+                  "peak_growth_mib": 5000, "max_seconds": 1800, "respect_vram": True},
+            headers={"Authorization": "Bearer admin-test-token"},
+        )
+        assert response.status_code == 201
+        assert response.json()["respect_vram"] is True
+        dashboard = client.get(
+            "/v1/dashboard", headers={"Authorization": "Bearer admin-test-token"}
+        ).json()
+        guarded = next(profile for profile in dashboard["profiles"]
+                       if profile["id"] == response.json()["id"])
+        assert guarded["respect_vram"] is True
+        legacy = client.post(
+            "/v1/profiles",
+            json={"project_id": "minimax", "label": "legacy default", "kind": "batch",
+                  "peak_growth_mib": 5000, "max_seconds": 1800},
+            headers={"Authorization": "Bearer admin-test-token"},
+        )
+        assert legacy.status_code == 201
+        assert legacy.json()["respect_vram"] is False
 
 
 def test_project_can_reconcile_only_its_own_confirmed_inactive_task(settings):

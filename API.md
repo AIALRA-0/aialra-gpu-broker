@@ -31,7 +31,7 @@
 
 `sessions` 状态：`REQUESTED`、`PREPARING`、`READY`、`CLOSING`、`UNCERTAIN`、`CLOSED`。实时请求只有到 `PREPARING` 才开始预热；只有模型和端到端探针通过后才能报告 `READY`。
 
-`batch_task` 是批处理业务任务的独占保护期，不是实时推理。它排到 `PREPARING` 后，项目确认自身任务入口准备就绪即可报告 `READY`；后续每个普通 GPU 阶段仍须单独申请并等到 `ACTIVE` 才能加载模型或提交工作流。整个任务完成前须持续续期会话，即使两阶段之间暂时没有活跃许可也不能释放；确认所有后端阶段停止后才能关闭。此类会话占用期间其他项目许可返回 `WAIT_TASK`，其阶段许可不再用静态显存增长估计作硬门槛，但仍要求遥测有效且同卡没有其他活跃许可或受保护会话。显存不足时项目只能停止并确认自己的阶段、保留任务与检查点再申请新阶段，不得抢占先到任务
+`batch_task` 是批处理业务任务的独占保护期，不是实时推理。它排到 `PREPARING` 后，项目确认自身任务入口准备就绪即可报告 `READY`；后续每个普通 GPU 阶段仍须单独申请并等到 `ACTIVE` 才能加载模型或提交工作流。整个任务完成前须持续续期会话，即使两阶段之间暂时没有活跃许可也不能释放；确认所有后端阶段停止后才能关闭。此类会话占用期间其他项目许可返回 `WAIT_TASK`，阶段许可默认不使用静态显存估计作硬门槛；画像设 `respect_vram:true` 时则要求当前已用显存 + 峰值增长 + 安全余量不超过显卡容量，否则返回 `WAIT_VRAM`。遥测仍须有效且同卡没有其他活跃许可或受保护会话。显存不足时项目只能停止并确认自己的阶段、保留任务与检查点再申请新阶段，不得抢占先到任务
 
 项目令牌只能核销本项目的 `UNCERTAIN` 记录，Broker 不转发媒体，也无法独立验证 ComfyUI 历史；这里的 `evidence` 是项目后端的核对声明，必须由实现方在请求前以原后端编号查询历史及队列，不得仅凭 GPU 占用降低释放许可。核销后的许可结果为 `RECONCILED`，与正常 `COMPLETED` 不同；业务是否成功仍由原项目依据产物、任务编号和单次发布规则决定。若后端仍运行或结果不明，保持 `UNCERTAIN`，禁止启动后续 GPU 阶段
 
@@ -41,7 +41,7 @@
 
 ## 管理接口
 
-管理员令牌可调用 `GET /v1/dashboard`、`GET /v1/history?gpu_uuid=...&minutes=60`、`GET /v1/events?after=0`、`GET /v1/admin/doctor`、`POST /v1/admin/backup`。`POST /v1/admin/allocation` 接受 `{"enabled":true|false}`。`POST /v1/admin/jobs/{job_id}/cancel` 会持久登记整个业务任务的取消请求，同时取消等待许可或将活跃许可改为 `CANCEL_REQUESTED`；适配器必须查询 job/permit 并真正停止后端。资源画像由 `POST /v1/profiles` 创建，字段为 `project_id`、`label`、`kind`（`batch` 或 `realtime`）、`peak_growth_mib`、`max_seconds`；`PATCH /v1/profiles/{id}` 可用 `{"enabled":false}` 停用。未完成许可关联的画像不能停用。
+管理员令牌可调用 `GET /v1/dashboard`、`GET /v1/history?gpu_uuid=...&minutes=60`、`GET /v1/events?after=0`、`GET /v1/admin/doctor`、`POST /v1/admin/backup`。`POST /v1/admin/allocation` 接受 `{"enabled":true|false}`。`POST /v1/admin/jobs/{job_id}/cancel` 会持久登记整个业务任务的取消请求，同时取消等待许可或将活跃许可改为 `CANCEL_REQUESTED`；适配器必须查询 job/permit 并真正停止后端。资源画像由 `POST /v1/profiles` 创建，字段为 `project_id`、`label`、`kind`（`batch` 或 `realtime`）、`peak_growth_mib`、`max_seconds`，可选布尔值 `respect_vram`（默认 `false`）；画像及 dashboard 均以 JSON 布尔值返回此字段。设为 `true` 会让关联画像在 `batch_task` 阶段也应用实时显存门槛。`PATCH /v1/profiles/{id}` 可用 `{"enabled":false}` 停用。未完成许可关联的画像不能停用。
 
 待核实许可使用 `POST /v1/admin/permits/{id}/reconcile`，待核实会话使用 `POST /v1/admin/sessions/{id}/reconcile`。请求必须包含 `{"backend_confirmed_inactive":true,"evidence":"至少十字符的具体核实证据"}`。管理页不会根据显卡占用降低就自动释放不确定任务；需要核对原后端任务编号和进程状态。
 

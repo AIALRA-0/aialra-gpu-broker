@@ -2,19 +2,24 @@
 
 此文档描述当前实例采用的网络边界和通用部署步骤，主机名、端口、用户、证书路径与身份网关路径都要按自己的环境设置
 
-## 1. 请求路径
+## 1. 目标请求路径
+
+目标状态是在每个项目完成配置后，由项目后端向同一个本机 GPU Broker（默认地址为 `http://127.0.0.1:18765`）申请受管 GPU 阶段的许可；只有收到 `ACTIVE` 许可才可调用对应模型服务
+模型输入与结果仍由各项目后端和本机模型服务传递，只有任务编号、许可和状态进入 Broker
+等待、拒绝或无法连接时都不能直连模型作为回退
 
 ```text
 浏览器 → HTTPS 反向代理 → Authentik 登录校验 → 私有转发 → 本机 Broker
 项目后端 → HTTPS 反向代理 → 项目 Bearer 令牌校验 → 私有转发 → 本机 Broker
-同机项目后端 → 127.0.0.1 → 本机 Broker
+同机项目后端 → 本机共享 Broker
 ```
 
 浏览器页面必须同时通过 Authentik 登录和 Broker 管理员令牌；项目 API 只接受项目自己的 Bearer 令牌，不能接受管理员令牌作为项目配置
 
 私有转发当前由本机主动建立 SSH 反向连接，远端监听仅绑定 `127.0.0.1`；公网服务器不能直接连接本机数据库或 GPU 端口
 
-当前 H3 使用另一套本机 Broker，Live 和 Manga 的模型调用仍走各自后端；此处的公开域名提供准入接口、状态和监控，不代理模型数据。三项目现状与选择依据见 [GPU 调用复核](GPU_CALL_REVIEW_2026-09-22.md)
+当前还不是上述目标状态：H3 仍接入自己的 Broker，Live 的 `AIALRA_GPU_BROKER_ENABLED` 与 Manga 的 `PANELTONE_GPU_BROKER_MODE` 均保持关闭；共享实例的全局 `allocation_enabled` 也保持关闭，因此它不会发放 `ACTIVE` 许可
+三项目现状与实施中的共享门禁决策见 [GPU 调用复核](GPU_CALL_REVIEW_2026-09-22.md)
 
 ## 2. 本机准备
 
@@ -35,8 +40,8 @@
 `deploy/Install-PrivateTunnel.ps1` 可以在用户登录时建立转发，并在 SSH 断线后重试；运行时按实际别名、远端端口、本机端口传参
 
 ```powershell
-# 示例参数需换成自己的私有网关
-.\deploy\Install-PrivateTunnel.ps1 -SshHost 'gpu-gateway' -RemotePort 18767 -LocalPort 18765
+# 将示例远端端口替换为网关实际分配的端口
+.\deploy\Install-PrivateTunnel.ps1 -SshHost 'gpu-gateway' -RemotePort 29000 -LocalPort 18765
 ```
 
 网关上向 `http://127.0.0.1:<REMOTE_PORT>/v1/health` 发请求应获得 `running=true`；若失败，先检查本机服务，再检查 SSH 转发任务和远端端口监听
