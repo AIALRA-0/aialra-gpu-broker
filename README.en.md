@@ -43,6 +43,8 @@ A project persists its own job ID, registers a broker job, and requests a permit
 
 While working, it sends heartbeats. To finish, it verifies that the backend is inactive before closing the permit. Lost heartbeats and uncertain state retain the reservation until reconciliation.
 
+`heartbeat_timeout_seconds` checks whether a project is online and defaults to 15 seconds. Active permits and ready sessions also use `active_heartbeat_grace_seconds`, which defaults to an additional 180 seconds. A brief heartbeat outage within the resulting 195-second window does not mark active work as lost or release its GPU reservation. A longer outage moves the record to `UNCERTAIN`, freezes new admission, and requires backend reconciliation. Preparing sessions also retain their separate `session_prepare_timeout_seconds` limit.
+
 See the [API reference](API.md) for fields and states, and the [integration prompts](INTEGRATION_PROMPTS.md) for the three target projects.
 
 ## 4 Public access

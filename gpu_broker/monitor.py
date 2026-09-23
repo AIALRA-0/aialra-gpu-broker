@@ -22,15 +22,14 @@ class NvidiaMonitor:
     """Read whole-card usage; WDDM process memory is intentionally not used."""
 
     def __post_init__(self) -> None:
+        # Keep telemetry outside the Broker process.  Some NVIDIA driver/NVML
+        # calls can block while holding the Python GIL under sustained GPU and
+        # host-memory pressure.  asyncio.to_thread cannot isolate that failure:
+        # the API loop and every heartbeat handler stop with it.  nvidia-smi is
+        # a separate process with a hard timeout, so a wedged driver query makes
+        # telemetry stale and admission fail closed without starving leases.
         self._nvml = None
-        self._nvml_error = None
-        try:
-            import pynvml
-
-            pynvml.nvmlInit()
-            self._nvml = pynvml
-        except Exception as exc:  # nvidia-smi remains a read-only fallback
-            self._nvml_error = type(exc).__name__
+        self._nvml_error = "in_process_nvml_disabled"
 
     def close(self) -> None:
         if self._nvml is not None:

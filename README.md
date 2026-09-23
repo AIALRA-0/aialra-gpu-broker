@@ -43,6 +43,10 @@ py -3.12 -m venv .venv
 
 运行期间项目发送心跳，结束时先确认后端已经停止，再结束 permit；失联、取消中或状态不确定时，Broker 保留占用记录并冻结可能冲突的新许可
 
+`heartbeat_timeout_seconds` 用于判断项目在线状态，默认 15 秒；活跃 permit 和已就绪会话还会等待 `active_heartbeat_grace_seconds`，默认额外 180 秒；因此 195 秒内的短暂心跳中断不会被误判为失联，原许可仍占用 GPU
+
+超过该时长仍没有心跳才会进入 `UNCERTAIN` 并冻结新准入，须核实后端后再恢复；准备中的会话仍受独立的 `session_prepare_timeout_seconds` 限制
+
 完整字段、状态和错误处理见 [接口协议](API.md)，三个现有项目的实施要求见 [项目接入提示词](INTEGRATION_PROMPTS.md)
 
 ## 4 公网访问与边界

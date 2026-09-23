@@ -101,7 +101,7 @@ class Broker:
 
     def _schema(self) -> None:
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-        if version > 3:
+        if version > 4:
             raise RuntimeError(f"Database schema {version} is newer than this broker")
         self.conn.executescript(
             """
@@ -134,7 +134,7 @@ class Broker:
                 request_key TEXT NOT NULL, owner_instance TEXT NOT NULL,
                 kind TEXT NOT NULL DEFAULT 'realtime',
                 status TEXT NOT NULL, reason TEXT, created_at REAL NOT NULL,
-                updated_at REAL NOT NULL, heartbeat_at REAL NOT NULL,
+                updated_at REAL NOT NULL, heartbeat_at REAL NOT NULL, preparing_at REAL,
                 UNIQUE(project_id, request_key)
             );
             CREATE TABLE IF NOT EXISTS permits (
@@ -166,6 +166,17 @@ class Broker:
         )
         if "kind" not in {row[1] for row in self.conn.execute("PRAGMA table_info(sessions)")}:
             self.conn.execute("ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'realtime'")
+        session_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(sessions)")}
+        if "preparing_at" not in session_columns:
+            self.conn.execute("ALTER TABLE sessions ADD COLUMN preparing_at REAL")
+        # For a pre-migration PREPARING row the actual transition time cannot
+        # be reconstructed: updated_at may have been refreshed by heartbeats.
+        # Start its bounded preparation window at migration time to avoid
+        # falsely timing out an in-flight session during upgrade.
+        self.conn.execute(
+            "UPDATE sessions SET preparing_at=? WHERE status='PREPARING' AND preparing_at IS NULL",
+            (time.time(),),
+        )
         if "respect_vram" not in {row[1] for row in self.conn.execute("PRAGMA table_info(profiles)")}:
             self.conn.execute(
                 "ALTER TABLE profiles ADD COLUMN respect_vram INTEGER NOT NULL DEFAULT 0 "
@@ -177,7 +188,7 @@ class Broker:
                     "INSERT OR IGNORE INTO projects(id,label) VALUES (?,?)", (project, label)
                 )
             self.conn.execute("INSERT OR IGNORE INTO meta(key,value) VALUES ('allocation_enabled','0')")
-            self.conn.execute("PRAGMA user_version=3")
+            self.conn.execute("PRAGMA user_version=4")
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -339,6 +350,10 @@ class Broker:
 
     def _tick(self, now: float) -> None:
         # Called only inside a write transaction; no two requests can grant at once.
+        active_heartbeat_deadline = (
+            self.settings.heartbeat_timeout_seconds
+            + self.settings.active_heartbeat_grace_seconds
+        )
         for permit in self.conn.execute(
             "SELECT permits.*, jobs.project_id FROM permits "
             "JOIN jobs ON jobs.id=permits.job_id "
@@ -346,7 +361,7 @@ class Broker:
         ).fetchall():
             project = self._project(permit["project_id"])
             stale = permit["heartbeat_at"] is None or (
-                now - permit["heartbeat_at"] > self.settings.heartbeat_timeout_seconds
+                now - permit["heartbeat_at"] > active_heartbeat_deadline
             )
             replaced = project["instance_id"] != permit["owner_instance"]
             if stale or replaced:
@@ -363,10 +378,11 @@ class Broker:
             "SELECT * FROM sessions WHERE status IN ('PREPARING','READY','CLOSING')"
         ).fetchall():
             project = self._project(session["project_id"])
-            stale = now - session["heartbeat_at"] > self.settings.heartbeat_timeout_seconds
+            stale = now - session["heartbeat_at"] > active_heartbeat_deadline
             replaced = project["instance_id"] != session["owner_instance"]
             prepare_timeout = session["status"] == "PREPARING" and \
-                now - session["updated_at"] > self.settings.session_prepare_timeout_seconds
+                now - (session["preparing_at"] or session["updated_at"]) > \
+                self.settings.session_prepare_timeout_seconds
             if stale or replaced or prepare_timeout:
                 reason = "OWNER_REPLACED" if replaced else \
                     "PREPARE_TIMEOUT" if prepare_timeout else "HEARTBEAT_LOST"
@@ -444,8 +460,8 @@ class Broker:
             ).fetchone()
             if session is not None:
                 self.conn.execute(
-                    "UPDATE sessions SET status='PREPARING',reason=NULL,updated_at=? WHERE id=?",
-                    (now, session["id"]),
+                    "UPDATE sessions SET status='PREPARING',reason=NULL,updated_at=?,preparing_at=? WHERE id=?",
+                    (now, now, session["id"]),
                 )
                 self._event(
                     "SESSION_PREPARING", project_id=session["project_id"], session_id=session["id"]
@@ -1034,6 +1050,9 @@ class Broker:
                 "allocation_enabled": self._allocation_enabled(),
                 "managed_gpu_uuid": self.settings.managed_gpu_uuid,
                 "display_gpu_uuid": self.settings.display_gpu_uuid,
+                "heartbeat_timeout_seconds": self.settings.heartbeat_timeout_seconds,
+                "active_heartbeat_grace_seconds": self.settings.active_heartbeat_grace_seconds,
+                "session_prepare_timeout_seconds": self.settings.session_prepare_timeout_seconds,
                 "safety_floor_mib": self.settings.safety_floor_mib,
                 "safety_ratio": self.settings.safety_ratio,
                 "snapshot": snapshot,

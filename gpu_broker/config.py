@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import secrets
 from dataclasses import dataclass
@@ -38,6 +39,14 @@ class Settings:
     session_prepare_timeout_seconds: float = 180.0
     safety_floor_mib: int = 2048
     safety_ratio: float = 0.125
+    # Appended to preserve positional argument compatibility for older callers.
+    # Active permits and sessions get this grace after the regular timeout.
+    active_heartbeat_grace_seconds: float = 180.0
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.active_heartbeat_grace_seconds) or \
+            self.active_heartbeat_grace_seconds < 0:
+            raise ValueError("active_heartbeat_grace_seconds must be a finite non-negative number")
 
     @property
     def db_path(self) -> Path:
@@ -77,6 +86,7 @@ def load_settings(data_dir: Path | None = None) -> Settings:
         sample_interval_seconds=float(config.get("sample_interval_seconds", 2.0)),
         stale_sample_seconds=float(config.get("stale_sample_seconds", 10.0)),
         heartbeat_timeout_seconds=float(config.get("heartbeat_timeout_seconds", 15.0)),
+        active_heartbeat_grace_seconds=float(config.get("active_heartbeat_grace_seconds", 180.0)),
         session_prepare_timeout_seconds=float(config.get("session_prepare_timeout_seconds", 180.0)),
         safety_floor_mib=int(config.get("safety_floor_mib", 2048)),
         safety_ratio=float(config.get("safety_ratio", 0.125)),
@@ -98,6 +108,7 @@ def initialize(data_dir: Path, managed_gpu_uuid: str, display_gpu_uuid: str | No
         "sample_interval_seconds": 2.0,
         "stale_sample_seconds": 10.0,
         "heartbeat_timeout_seconds": 15.0,
+        "active_heartbeat_grace_seconds": 180.0,
         "session_prepare_timeout_seconds": 180.0,
         "safety_floor_mib": 2048,
         "safety_ratio": 0.125,

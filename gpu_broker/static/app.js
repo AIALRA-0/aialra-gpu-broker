@@ -67,6 +67,11 @@ function render(data) {
   $("scheduleMode").textContent = mode;
   $("scheduleMode").className = $("modeBadge").className;
   $("modeDescription").textContent = data.counts.uncertain ? "有状态待核实。新任务准入已冻结，先确认后端停止。" : !fresh ? "受管 GPU 遥测不可用或过期，新的 GPU 许可不会发放。" : data.allocation_enabled ? "仅对已接入的项目调用发放许可；未接入路径仍可绕过。" : "目前只监控，不发放新的 GPU 许可；项目调用尚未统一受控。";
+  const onlineTimeout = Math.round(data.heartbeat_timeout_seconds ?? 15);
+  const activeGrace = Math.round(data.active_heartbeat_grace_seconds ?? 180);
+  const activeTimeout = onlineTimeout + activeGrace;
+  const prepareTimeout = Math.round(data.session_prepare_timeout_seconds ?? 180);
+  $("heartbeatPolicy").textContent = `项目在线 ${onlineTimeout}s · 活跃宽限 +${activeGrace}s（合计 ${activeTimeout}s） · 会话准备 ${prepareTimeout}s`;
   $("allocationButton").disabled = false;
   $("allocationButton").textContent = data.allocation_enabled ? "暂停新准入" : "启用 GPU 准入";
   $("allocationButton").className = data.allocation_enabled ? "danger-button" : "primary-button";

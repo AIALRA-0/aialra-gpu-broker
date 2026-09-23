@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 import threading
 import sqlite3
@@ -9,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gpu_broker.api import create_app
-from gpu_broker.config import Settings
+from gpu_broker.config import Settings, initialize, load_settings
 from gpu_broker.core import Broker, BrokerError
 from gpu_broker.monitor import NvidiaMonitor
 
@@ -45,6 +46,39 @@ def settings(tmp_path):
             "minimax": "mini-test-token", "live_translate": "live-test-token", "manga": "manga-test-token"
         },
     )
+
+
+def test_active_heartbeat_grace_config_defaults_and_override(tmp_path):
+    initialize(tmp_path, GPU, DISPLAY)
+    config_path = tmp_path / "config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert config["active_heartbeat_grace_seconds"] == 180.0
+    assert load_settings(tmp_path).active_heartbeat_grace_seconds == 180.0
+
+    # Existing installations may edit config.json, and older configs without
+    # the new field receive the safe default instead of failing to start.
+    config["active_heartbeat_grace_seconds"] = 240.0
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    assert load_settings(tmp_path).active_heartbeat_grace_seconds == 240.0
+    del config["active_heartbeat_grace_seconds"]
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    assert load_settings(tmp_path).active_heartbeat_grace_seconds == 180.0
+
+    config["active_heartbeat_grace_seconds"] = -1.0
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(ValueError, match="finite non-negative"):
+        load_settings(tmp_path)
+
+
+def test_settings_keeps_legacy_positional_field_order(tmp_path):
+    configured = Settings(
+        tmp_path, GPU, DISPLAY, "admin-test-token", {}, None,
+        2.0, 10.0, 15.0, 90.0, 1024, 0.25,
+    )
+    assert configured.session_prepare_timeout_seconds == 90.0
+    assert configured.safety_floor_mib == 1024
+    assert configured.safety_ratio == 0.25
+    assert configured.active_heartbeat_grace_seconds == 180.0
 
 
 def setup_job(broker, project, profile, instance, external):
@@ -159,7 +193,9 @@ def test_telemetry_and_vram_fail_closed(settings):
 
 
 def test_cancel_does_not_release_and_lost_owner_freezes(settings):
-    settings = replace(settings, heartbeat_timeout_seconds=0.2)
+    settings = replace(
+        settings, heartbeat_timeout_seconds=0.2, active_heartbeat_grace_seconds=0.0
+    )
     broker = Broker(settings, FakeMonitor())
     try:
         broker.start()
@@ -173,6 +209,106 @@ def test_cancel_does_not_release_and_lost_owner_freezes(settings):
         broker.poll()
         assert broker.get_permit("minimax", first["id"])["status"] == "UNCERTAIN"
         assert broker.get_permit("minimax", second["id"])["reason"] == "WAIT_RECONCILE"
+    finally:
+        broker.stop()
+
+
+def test_active_permit_tolerates_transient_and_long_scheduler_stalls(settings):
+    settings = replace(
+        settings, heartbeat_timeout_seconds=15.0, active_heartbeat_grace_seconds=180.0
+    )
+    broker = Broker(settings, FakeMonitor())
+    try:
+        broker.start()
+        profile = broker.create_profile("minimax", "H3", "batch", 4000, 7200)
+        broker.set_allocation(True)
+        _, active = setup_job(broker, "minimax", profile, "worker-a", "stall-tolerant-task")
+
+        # A synthetic 190-second scheduler pause remains inside the configured
+        # 15 + 180 second liveness window, so another task cannot take the permit.
+        for gap_seconds in (16.0, 190.0):
+            with broker.transaction():
+                broker.conn.execute(
+                    "UPDATE permits SET heartbeat_at=? WHERE id=?",
+                    (time.time() - gap_seconds, active["id"]),
+                )
+            broker.poll()
+            assert broker.get_permit("minimax", active["id"])["status"] == "ACTIVE"
+
+        renewed = broker.permit_heartbeat("minimax", active["id"], "worker-a", None)
+        assert renewed["status"] == "ACTIVE"
+
+        _, waiting = setup_job(broker, "minimax", profile, "worker-a", "must-wait-behind-active")
+        assert waiting["status"] == "WAITING" and waiting["reason"] == "WAIT_ACTIVE"
+    finally:
+        broker.stop()
+
+
+def test_sustained_active_permit_loss_becomes_uncertain_and_freezes_queue(settings):
+    settings = replace(
+        settings, heartbeat_timeout_seconds=15.0, active_heartbeat_grace_seconds=180.0
+    )
+    broker = Broker(settings, FakeMonitor())
+    try:
+        broker.start()
+        profile = broker.create_profile("minimax", "H3", "batch", 4000, 7200)
+        broker.set_allocation(True)
+        _, active = setup_job(broker, "minimax", profile, "worker-a", "sustained-loss-task")
+        with broker.transaction():
+            broker.conn.execute(
+                "UPDATE permits SET heartbeat_at=? WHERE id=?",
+                (time.time() - 196.0, active["id"]),
+            )
+
+        broker.poll()
+        uncertain = broker.get_permit("minimax", active["id"])
+        assert uncertain["status"] == "UNCERTAIN" and uncertain["reason"] == "HEARTBEAT_LOST"
+        _, waiting = setup_job(broker, "minimax", profile, "worker-a", "wait-for-reconcile")
+        assert waiting["status"] == "WAITING" and waiting["reason"] == "WAIT_RECONCILE"
+    finally:
+        broker.stop()
+
+
+def test_ready_session_uses_active_heartbeat_grace(settings):
+    settings = replace(
+        settings, heartbeat_timeout_seconds=15.0, active_heartbeat_grace_seconds=180.0
+    )
+    broker = Broker(settings, FakeMonitor())
+    try:
+        broker.start()
+        broker.set_allocation(True)
+        broker.project_heartbeat("minimax", "worker-a", "online", 0)
+        session = broker.request_session("minimax", "long-running-task", "worker-a", "batch_task")
+        broker.session_ready("minimax", session["id"], "worker-a")
+        profile = broker.create_profile("minimax", "H3", "batch", 4000, 7200)
+        job = broker.register_job("minimax", "session-task", "session-task-idem", "session-task")
+        permit = broker.request_permit(
+            "minimax", job["id"], profile["id"], "session-stage", "inference",
+            "worker-a", None, session["id"],
+        )
+        assert permit["status"] == "ACTIVE"
+
+        with broker.transaction():
+            broker.conn.execute(
+                "UPDATE sessions SET heartbeat_at=? WHERE id=?",
+                (time.time() - 190.0, session["id"]),
+            )
+        broker.poll()
+        assert broker.get_session("minimax", session["id"])["status"] == "READY"
+        recovered = broker.session_heartbeat("minimax", session["id"], "worker-a")
+        assert recovered["status"] == "READY"
+
+        with broker.transaction():
+            broker.conn.execute(
+                "UPDATE sessions SET heartbeat_at=? WHERE id=?",
+                (time.time() - 196.0, session["id"]),
+            )
+        broker.poll()
+        stale_session = broker.get_session("minimax", session["id"])
+        assert stale_session["status"] == "UNCERTAIN"
+        assert stale_session["reason"] == "HEARTBEAT_LOST"
+        # Session uncertainty must not silently release its active stage.
+        assert broker.get_permit("minimax", permit["id"])["status"] == "ACTIVE"
     finally:
         broker.stop()
 
@@ -330,7 +466,7 @@ def test_old_database_adds_respect_vram_with_legacy_default(settings):
     try:
         legacy = broker._one("SELECT * FROM profiles WHERE id='legacy-profile'")
         assert legacy["respect_vram"] == 0
-        assert broker.conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert broker.conn.execute("PRAGMA user_version").fetchone()[0] == 4
         created = broker.create_profile("minimax", "New default", "batch", 4000, 1800)
         assert created["respect_vram"] is False
     finally:
@@ -346,11 +482,111 @@ def test_stalled_realtime_preparation_freezes_grants(settings):
         session = broker.request_session("live_translate", "stalled-session", "live-a")
         assert session["status"] == "PREPARING"
         with broker.transaction():
-            broker.conn.execute("UPDATE sessions SET updated_at=? WHERE id=?",
-                                (time.time() - 2, session["id"]))
+            broker.conn.execute("UPDATE sessions SET preparing_at=?,updated_at=?,heartbeat_at=? WHERE id=?",
+                                (time.time() - 2, time.time(), time.time(), session["id"]))
         broker.poll()
         after = broker.get_session("live_translate", session["id"])
         assert after["status"] == "UNCERTAIN" and after["reason"] == "PREPARE_TIMEOUT"
+    finally:
+        broker.stop()
+
+
+def test_preparing_timeout_is_not_extended_by_session_heartbeats(settings):
+    broker = Broker(
+        replace(settings, session_prepare_timeout_seconds=1.0), FakeMonitor()
+    )
+    try:
+        broker.start()
+        broker.set_allocation(True)
+        broker.project_heartbeat("live_translate", "live-a", "online", 0)
+        session = broker.request_session("live_translate", "preparing-timeout", "live-a")
+        assert session["status"] == "PREPARING"
+        assert session["preparing_at"] is not None
+
+        with broker.transaction():
+            broker.conn.execute(
+                "UPDATE sessions SET preparing_at=?,updated_at=?,heartbeat_at=? WHERE id=?",
+                (time.time() - 2, time.time(), time.time(), session["id"]),
+            )
+
+        after_heartbeat = broker.session_heartbeat("live_translate", session["id"], "live-a")
+        assert after_heartbeat["status"] == "UNCERTAIN"
+        assert after_heartbeat["reason"] == "PREPARE_TIMEOUT"
+    finally:
+        broker.stop()
+
+
+def test_requested_session_still_uses_regular_online_timeout(settings):
+    broker = Broker(
+        replace(
+            settings,
+            heartbeat_timeout_seconds=0.05,
+            active_heartbeat_grace_seconds=120.0,
+        ),
+        FakeMonitor(),
+    )
+    try:
+        broker.start()
+        broker.project_heartbeat("live_translate", "live-a", "online", 0)
+        session = broker.request_session("live_translate", "requested-timeout", "live-a")
+        assert session["status"] == "REQUESTED"
+        with broker.transaction():
+            broker.conn.execute(
+                "UPDATE sessions SET heartbeat_at=? WHERE id=?",
+                (time.time() - 0.06, session["id"]),
+            )
+
+        broker.poll()
+        expired = broker.get_session("live_translate", session["id"])
+        assert expired["status"] == "CLOSED" and expired["reason"] == "OWNER_LOST"
+    finally:
+        broker.stop()
+
+
+def test_legacy_preparing_session_migration_starts_bounded_window(tmp_path):
+    now = time.time()
+    db_path = tmp_path / "broker.sqlite3"
+    with sqlite3.connect(db_path) as legacy:
+        legacy.executescript(
+            """
+            CREATE TABLE projects (
+                id TEXT PRIMARY KEY, label TEXT NOT NULL, weight REAL NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 1, last_seen REAL,
+                instance_id TEXT, reported_status TEXT, reported_resident_mib INTEGER NOT NULL DEFAULT 0,
+                usage_seconds REAL NOT NULL DEFAULT 0
+            );
+            INSERT INTO projects(id,label,last_seen,instance_id)
+                VALUES ('live_translate','Live Translate',0,'legacy-worker');
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+                request_key TEXT NOT NULL, owner_instance TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'realtime', status TEXT NOT NULL, reason TEXT,
+                created_at REAL NOT NULL, updated_at REAL NOT NULL, heartbeat_at REAL NOT NULL,
+                UNIQUE(project_id, request_key)
+            );
+            PRAGMA user_version=3;
+            """
+        )
+        legacy.execute(
+            "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("legacy-session", "live_translate", "legacy-key", "legacy-worker", "realtime",
+             "PREPARING", None, now - 1000, now - 1000, now),
+        )
+
+    settings = Settings(
+        data_dir=tmp_path, managed_gpu_uuid=GPU, display_gpu_uuid=DISPLAY,
+        admin_token="admin-test-token", project_tokens={
+            "minimax": "mini-test-token", "live_translate": "live-test-token", "manga": "manga-test-token"
+        },
+        session_prepare_timeout_seconds=1.0,
+    )
+    broker = Broker(settings, FakeMonitor())
+    try:
+        migrated = broker.get_session("live_translate", "legacy-session")
+        assert migrated["preparing_at"] >= now
+        assert broker.conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        broker.poll()
+        assert broker.get_session("live_translate", "legacy-session")["status"] == "PREPARING"
     finally:
         broker.stop()
 
@@ -370,6 +606,8 @@ def test_api_auth_and_static(settings):
         response = client.get("/v1/dashboard", headers={"Authorization": "Bearer admin-test-token"})
         assert response.status_code == 200
         assert response.json()["allocation_enabled"] is False
+        assert response.json()["heartbeat_timeout_seconds"] == 15.0
+        assert response.json()["active_heartbeat_grace_seconds"] == 180.0
         assert client.post("/v1/admin/allocation", json={"enabled": True},
             headers={"Authorization": "Bearer admin-test-token", "Origin": "http://evil.test"}).status_code == 403
 
@@ -445,6 +683,22 @@ def test_monitor_falls_back_when_nvml_read_fails(monkeypatch):
     monkeypatch.setattr(monitor, "_read_smi", lambda: [{"uuid": GPU, "used_mib": 1}])
     result = monitor.read()
     assert result["ok"] is True and result["source"] == "nvidia-smi"
+
+
+def test_monitor_defaults_to_timeout_bounded_out_of_process_smi(monkeypatch):
+    monitor = NvidiaMonitor()
+    assert monitor._nvml is None
+    assert monitor._nvml_error == "in_process_nvml_disabled"
+    monkeypatch.setattr(
+        monitor, "_read_nvml",
+        lambda: (_ for _ in ()).throw(AssertionError("in-process NVML must not run")),
+    )
+    monkeypatch.setattr(monitor, "_read_smi", lambda: [{"uuid": GPU, "used_mib": 1}])
+
+    result = monitor.read()
+
+    assert result["ok"] is True
+    assert result["source"] == "nvidia-smi"
 
 
 def test_transaction_preserves_error_after_sqlite_cancels_transaction():
