@@ -33,6 +33,8 @@
 
 登录任务中的启动脚本会在 Python 进程意外退出后持续重试，每次间隔默认 10 秒；计划任务也配置失败重启。部署后仍应监视公网 `/ready`，因为本机进程重启、主机内存紧张或隧道中断期间仍可能短暂不可用
 
+Windows 版启动脚本把监护进程及其 Python 子进程放入同一个 Job Object；停止计划任务时应同时释放监听端口。可运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test_run_gpu_broker_supervisor_job.ps1` 做不连接 GPU 的进程归属测试
+
 ## 3. 私有转发
 
 在本机 SSH 配置中为网关创建专用别名和受限密钥，确保远端反向端口只绑定回环地址；检查远端监听地址确实是 `127.0.0.1`，不能是 `0.0.0.0`
