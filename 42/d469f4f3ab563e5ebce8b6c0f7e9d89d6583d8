@@ -1,0 +1,24 @@
+tests/test_broker.py
+  s_d8a6c2c7869d89::t_bc3e47c7c6b753 422-423,427,437-438,446,451,470-471,475,484
+  s_d8a6c2c7869d89::t_e91f59f272adf0 26,33-34,381,397-398,420-421,424-426,428-436,439-445,447-450,452-469,472-474,476-483,485-490,508-509
+gpu_broker/core.py
+  s_d8a6c2c7869d89::t_e91f59f272adf0 18-20,517-529
+API.md
+  s_d8a6c2c7869d89::t_e91f59f272adf0 34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "42d469f4f3ab563e5ebce8b6c0f7e9d89d6583d8",
+  "prompts": {},
+  "sessions": {
+    "s_d8a6c2c7869d89": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ac66-5ced-79f0-8a2d-3451930b38e6",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    }
+  }
+}
