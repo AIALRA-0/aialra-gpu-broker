@@ -15,6 +15,9 @@ from .config import PROJECTS, Settings
 from .monitor import Monitor
 
 
+EXCLUSIVE_BATCH_HEADROOM_MIB = 1024
+
+
 def _id() -> str:
     return str(uuid.uuid4())
 
@@ -511,7 +514,19 @@ class Broker:
         if exclusive_task and task_session["status"] != "READY":
             self._reason(permit["id"], "WAIT_TASK_READY")
             return False
-        if not exclusive_task or bool(permit["respect_vram"]):
+        if exclusive_task and not bool(permit["respect_vram"]):
+            # A batch_task is exclusive among Broker clients, but it can still
+            # overlap an unmanaged GPU process. Keep a modest, fixed admission
+            # headroom for this measured-exclusive path; this is an admission
+            # snapshot, not a reservation against external processes starting later.
+            headroom = EXCLUSIVE_BATCH_HEADROOM_MIB
+            if permit["peak_growth_mib"] + headroom > card["total_mib"]:
+                self._reason(permit["id"], "PROFILE_NOT_FIT")
+                return False
+            if card["used_mib"] + permit["peak_growth_mib"] + headroom > card["total_mib"]:
+                self._reason(permit["id"], "WAIT_VRAM")
+                return False
+        elif not exclusive_task or bool(permit["respect_vram"]):
             safety = max(self.settings.safety_floor_mib, int(card["total_mib"] * self.settings.safety_ratio))
             if permit["peak_growth_mib"] + safety > card["total_mib"]:
                 self._reason(permit["id"], "PROFILE_NOT_FIT")

@@ -23,14 +23,15 @@ class FakeMonitor:
     def __init__(self):
         self.ok = True
         self.used = 1000
+        self.total = 16000
 
     def read(self):
         return {
             "ok": self.ok, "timestamp": time.time(), "error": None if self.ok else "test outage",
             "source": "fake", "host": {"cpu_pct": 12, "ram_used_mib": 4096, "ram_total_mib": 16384},
             "gpus": [{
-                "uuid": GPU, "name": "Test 4080", "total_mib": 16000,
-                "used_mib": self.used, "free_mib": 16000 - self.used,
+                "uuid": GPU, "name": "Test 4080", "total_mib": self.total,
+                "used_mib": self.used, "free_mib": self.total - self.used,
                 "utilization_pct": 20, "temperature_c": 43, "driver": "test",
             }, {"uuid": DISPLAY, "name": "Test 2070", "total_mib": 8000,
                 "used_mib": 1000, "free_mib": 7000, "utilization_pct": 2,
@@ -377,7 +378,7 @@ def test_realtime_prepares_after_batch_and_protects_session(settings):
 
 def test_batch_task_keeps_exclusive_turn_between_stages(settings):
     monitor = FakeMonitor()
-    monitor.used = 15000
+    monitor.used = 1000
     broker = Broker(settings, monitor)
     try:
         broker.start()
@@ -393,7 +394,8 @@ def test_batch_task_keeps_exclusive_turn_between_stages(settings):
         job = broker.register_job("minimax", "whole-task", "whole-task-idem", "whole-task")
         first = broker.request_permit("minimax", job["id"], h3_profile["id"],
                                       "first-stage", "video", "h3-worker", None, session["id"])
-        # Only the task owns the GPU; a stale static peak must not reject it.
+        # The task owns the Broker turn and the current admission snapshot has
+        # enough room for its peak plus the fixed exclusive headroom.
         assert first["status"] == "ACTIVE"
         broker.project_heartbeat("manga", "other-worker", "online", 0)
         other_job = broker.register_job("manga", "later-task", "later-task-idem", "later-task")
@@ -415,6 +417,77 @@ def test_batch_task_keeps_exclusive_turn_between_stages(settings):
         broker.stop()
 
 
+def test_batch_task_exclusive_profile_grants_with_fixed_headroom(settings):
+    monitor = FakeMonitor()
+    monitor.total = 16384
+    monitor.used = 300
+    broker = Broker(settings, monitor)
+    try:
+        broker.start()
+        profile = broker.create_profile("minimax", "Representative video", "batch", 14800, 1800)
+        assert profile["respect_vram"] is False
+        broker.set_allocation(True)
+        broker.project_heartbeat("minimax", "h3-worker", "online", 0)
+        session = broker.request_session("minimax", "quiet-task", "h3-worker", "batch_task")
+        session = broker.session_ready("minimax", session["id"], "h3-worker")
+        job = broker.register_job("minimax", "quiet-job", "quiet-job-idem", "quiet job")
+        permit = broker.request_permit("minimax", job["id"], profile["id"],
+                                       "quiet-stage", "video", "h3-worker", None, session["id"])
+
+        # 300 baseline + 14,800 representative growth + 1,024 headroom fits
+        # on a 16,384 MiB card. The configurable 2,048 MiB reserve would reject it.
+        assert permit["status"] == "ACTIVE"
+    finally:
+        broker.stop()
+
+
+def test_batch_task_exclusive_profile_waits_when_unmanaged_gpu_use_is_high(settings):
+    monitor = FakeMonitor()
+    monitor.total = 16384
+    monitor.used = 7800
+    broker = Broker(settings, monitor)
+    try:
+        broker.start()
+        profile = broker.create_profile("minimax", "Representative video", "batch", 14800, 1800)
+        broker.set_allocation(True)
+        broker.project_heartbeat("minimax", "h3-worker", "online", 0)
+        session = broker.request_session("minimax", "busy-task", "h3-worker", "batch_task")
+        session = broker.session_ready("minimax", session["id"], "h3-worker")
+        job = broker.register_job("minimax", "busy-job", "busy-job-idem", "busy job")
+        permit = broker.request_permit("minimax", job["id"], profile["id"],
+                                       "busy-stage", "video", "h3-worker", None, session["id"])
+
+        # Admission telemetry includes a legacy/unmanaged allocation at roughly
+        # 7.8 GiB. The stage cannot fit alongside it and must remain queued.
+        assert permit["status"] == "WAITING"
+        assert permit["reason"] == "WAIT_VRAM"
+    finally:
+        broker.stop()
+
+
+def test_batch_task_exclusive_profile_that_cannot_fit_is_rejected(settings):
+    monitor = FakeMonitor()
+    monitor.total = 16384
+    monitor.used = 300
+    broker = Broker(settings, monitor)
+    try:
+        broker.start()
+        profile = broker.create_profile("minimax", "Impossible video", "batch", 15361, 1800)
+        broker.set_allocation(True)
+        broker.project_heartbeat("minimax", "h3-worker", "online", 0)
+        session = broker.request_session("minimax", "impossible-task", "h3-worker", "batch_task")
+        session = broker.session_ready("minimax", session["id"], "h3-worker")
+        job = broker.register_job("minimax", "impossible-job", "impossible-job-idem", "impossible job")
+        permit = broker.request_permit("minimax", job["id"], profile["id"],
+                                       "impossible-stage", "video", "h3-worker", None, session["id"])
+
+        # 15,361 + 1,024 exceeds the 16,384 MiB device even at zero use.
+        assert permit["status"] == "WAITING"
+        assert permit["reason"] == "PROFILE_NOT_FIT"
+    finally:
+        broker.stop()
+
+
 def test_batch_task_profile_can_require_live_vram_capacity(settings):
     monitor = FakeMonitor()
     monitor.used = 10000
@@ -432,7 +505,8 @@ def test_batch_task_profile_can_require_live_vram_capacity(settings):
         permit = broker.request_permit("minimax", job["id"], profile["id"],
                                        "guarded-stage", "video", "h3-worker", None, session["id"])
 
-        # 10,000 used + 5,000 peak + 2,048 safety exceeds 16,000 total.
+        # respect_vram=true preserves the configurable safety reserve for
+        # batch_task profiles. 10,000 + 5,000 + 2,048 exceeds 16,000.
         assert permit["status"] == "WAITING"
         assert permit["reason"] == "WAIT_VRAM"
 
