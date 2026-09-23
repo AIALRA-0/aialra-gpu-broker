@@ -1,0 +1,75 @@
+gpu_broker/core.py
+  s_7e23799dc317a2::t_9a36688a903eca 104,137,169-179,191,384-385,463-464
+  s_7e23799dc317a2::t_a4783720c6fb8a 1053-1055
+  s_7e23799dc317a2::t_b32dd980e794a9 353-356,364,381
+tools/sample_gpu.py
+  s_d8a6c2c7869d89::t_d5db72b79f94cb 1-17,25-70
+  s_d8a6c2c7869d89::t_152cb3695ec5db 18-24
+gpu_broker/monitor.py
+  s_7e23799dc317a2::t_86349a9ac9d520 25-30,32
+README.md
+  s_7e23799dc317a2::t_b32dd980e794a9 49
+  s_d8a6c2c7869d89::t_48e056b368b52f 46-48
+README.en.md
+  s_7e23799dc317a2::t_b32dd980e794a9 47
+  s_d8a6c2c7869d89::t_721398c3700605 46
+API.md
+  s_7e23799dc317a2::t_33d163b4f2a355 46
+  s_7e23799dc317a2::t_649c926f058c38 36
+  s_7e23799dc317a2::t_b32dd980e794a9 37
+gpu_broker/static/index.html
+  s_7e23799dc317a2::t_9a36688a903eca 30
+gpu_broker/static/app.js
+  s_7e23799dc317a2::t_9a36688a903eca 70-74
+tests/test_broker.py
+  s_7e23799dc317a2::t_a4783720c6fb8a 609-610
+  s_7e23799dc317a2::t_9a36688a903eca 312-313,469,485-486,494-591
+  s_7e23799dc317a2::t_a35a34fad6ec7c 67-71
+  s_7e23799dc317a2::t_86349a9ac9d520 688-703
+  s_d8a6c2c7869d89::t_152cb3695ec5db 227-229,294
+  s_7e23799dc317a2::t_b32dd980e794a9 196-198,216-226,230-237,241-293,295-297,300-311
+  s_d8a6c2c7869d89::t_721398c3700605 3,13,51-65
+  s_7e23799dc317a2::t_649c926f058c38 73-83
+  s_5acd167c2115aa::t_ac6786d1fd19bf 66,72,238-240,298-299,314-315,592-593
+tests/test_cross_project_gate_acceptance.py
+  s_d8a6c2c7869d89::t_2100a19f897498 1-144,152-153,159,161-171,173-207,212-219,224-226,231,254
+  s_d8a6c2c7869d89::t_563cff75fd8095 172,265
+  s_d8a6c2c7869d89::t_e2479ebd1207ff 220-223,227-230,232-253,255-264
+  s_d8a6c2c7869d89::t_121b2b60ddf69d 145-151,154-158,160,208-211
+gpu_broker/config.py
+  s_7e23799dc317a2::t_b32dd980e794a9 89,111
+  s_7e23799dc317a2::t_9a36688a903eca 42-44
+  s_7e23799dc317a2::t_a35a34fad6ec7c 4,45-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1089bfe9d79a2531da30ec84c51ae543ee20f457",
+  "prompts": {},
+  "sessions": {
+    "s_5acd167c2115aa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a03a21-3e91-7be2-8cf4-5616c2bcfc48",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    },
+    "s_7e23799dc317a2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ad52-c35f-7882-a496-5c0fabb841af",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    },
+    "s_d8a6c2c7869d89": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ac66-5ced-79f0-8a2d-3451930b38e6",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    }
+  }
+}
