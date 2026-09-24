@@ -1,0 +1,24 @@
+gpu_broker/static/index.html
+  s_d8a6c2c7869d89::t_d97f497ca022bc 34-35
+gpu_broker/static/styles.css
+  s_d8a6c2c7869d89::t_5369170dda78c2 3-4
+gpu_broker/static/app.js
+  s_d8a6c2c7869d89::t_dceb9fe0caede3 82-92,94-96,106-112,115,139-141,148,150-154
+  s_d8a6c2c7869d89::t_102f08af408b87 93,113-114,142-147,149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9030fe17b25a6a6497c87616668f3372aaaff34a",
+  "prompts": {},
+  "sessions": {
+    "s_d8a6c2c7869d89": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ac66-5ced-79f0-8a2d-3451930b38e6",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    }
+  }
+}
