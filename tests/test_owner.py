@@ -187,8 +187,8 @@ def test_release_needs_complete_fresh_proof_and_never_kills_or_frees_on_timeout(
     acquired = owner.acquire("h3-key", "h3-release")
     assert acquired.decision is Decision.ACQUIRED
 
-    # An IDLE task report is insufficient while model and child-process facts
-    # are missing, and a high GPU snapshot prevents handoff.
+    # An IDLE report is insufficient while the next entry is unfenced and the
+    # GPU remains above the handoff range.
     probe.set_project(
         "h3", ObservationState.IDLE, "h3-release",
         model_released=None, child_processes_exited=None, entry_fenced=False,
@@ -214,6 +214,42 @@ def test_release_needs_complete_fresh_proof_and_never_kills_or_frees_on_timeout(
     aged = owner.observe("live-key")
     assert aged.decision is Decision.UNKNOWN
     assert aged.state is OwnerState.UNKNOWN
+
+
+def test_adapter_idle_summary_does_not_need_optional_diagnostic_fields(tmp_path):
+    clock = FakeClock()
+    probe = FakeProbe(clock)
+    for project in ("h3", "live", "manga"):
+        probe.set_project(
+            project, ObservationState.IDLE,
+            model_released=None, child_processes_exited=None,
+        )
+    owner = make_owner(tmp_path, probe, clock)
+    assert owner.acquire("h3-key", "h3-minimal-facts").decision is Decision.ACQUIRED
+
+    probe.set_project(
+        "h3", ObservationState.IDLE, "h3-minimal-facts",
+        model_released=None, child_processes_exited=None,
+    )
+    released = owner.release("h3-key", "h3-minimal-facts")
+    assert released.decision is Decision.RELEASED
+    assert released.state is OwnerState.FREE
+
+
+def test_explicit_release_contradiction_still_freezes_new_work(tmp_path):
+    clock = FakeClock()
+    probe = FakeProbe(clock)
+    owner = make_owner(tmp_path, probe, clock)
+    assert owner.acquire("h3-key", "h3-contradiction").decision is Decision.ACQUIRED
+
+    probe.set_project(
+        "h3", ObservationState.IDLE, "h3-contradiction",
+        model_released=False, child_processes_exited=None,
+    )
+    result = owner.release("h3-key", "h3-contradiction")
+    assert result.decision is Decision.UNKNOWN
+    assert result.state is OwnerState.UNKNOWN
+    assert owner.acquire("live-key", "live-must-wait").decision is Decision.UNKNOWN
 
 
 def test_old_observation_cannot_overwrite_newer_observation(tmp_path):

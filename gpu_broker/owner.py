@@ -52,10 +52,10 @@ class ProjectObservation:
     """Fresh, generic GPU-use facts reported by one project adapter.
 
     ``owner_instance`` identifies the adapter's still-held Owner claim. IDLE
-    proves there is no current work, the model is released, child processes are
-    gone, and the project's GPU entry is fenced so no next stage can start. A
-    project that can still enqueue GPU work between stages reports BUSY or
-    UNKNOWN even when instantaneous utilization is low.
+    is the adapter's direct assertion that its GPU work and model residency
+    have ended. The separate entry fence prevents a next stage from starting
+    during handoff. Optional detail fields help diagnose a disagreement but
+    are not independent coverage requirements for every project.
     """
 
     project: str
@@ -75,6 +75,9 @@ class ProjectObservation:
             raise ValueError("observed_at must be a finite timestamp")
         if self.owner_instance is not None and not _valid_instance(self.owner_instance):
             raise ValueError("owner_instance is invalid")
+        for detail in (self.model_released, self.child_processes_exited):
+            if detail is not None and not isinstance(detail, bool):
+                raise ValueError("release detail must be a boolean or None")
         if self.entry_fenced is not None and not isinstance(self.entry_fenced, bool):
             raise ValueError("entry_fenced must be a boolean or None")
 
@@ -622,9 +625,9 @@ class OwnerCoordinator:
     def _idle_observation(observation: ProjectObservation) -> bool:
         return (
             observation.status == ObservationState.IDLE
-            and observation.model_released is True
-            and observation.child_processes_exited is True
             and observation.entry_fenced is True
+            and observation.model_released is not False
+            and observation.child_processes_exited is not False
         )
 
     def _all_idle_proof(self, bundle: ObservationBundle) -> bool:
