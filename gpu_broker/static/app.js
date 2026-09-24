@@ -79,6 +79,21 @@ function render(data) {
   gpuCard("display", display, data, false);
   renderSchedule(data); renderAlerts(data); renderProjects(data, now); renderJobs(data); renderProfiles(data); renderEvents(data);
 }
+function brokerRegisteredOwners(data) {
+  const owners = new Map();
+  for (const permit of data.permits || []) {
+    if (!["ACTIVE", "CANCEL_REQUESTED", "UNCERTAIN"].includes(permit.status)) continue;
+    const label = projectName[permit.project_id] || permit.project_id || "未知项目";
+    const detail = permit.job_label || permit.stage;
+    owners.set(label, detail ? `${label} · ${detail}` : label);
+  }
+  for (const session of data.sessions || []) {
+    if (!["PREPARING", "READY", "CLOSING", "UNCERTAIN"].includes(session.status)) continue;
+    const label = projectName[session.project_id] || session.project_id || "未知项目";
+    if (!owners.has(label)) owners.set(label, `${label} · 会话占用`);
+  }
+  return [...owners.values()];
+}
 function gpuCard(prefix, gpu, data, managed) {
   $(prefix + "Uuid").textContent = gpu?.uuid || (managed ? data.managed_gpu_uuid : data.display_gpu_uuid) || "未配置";
   $(prefix + "Name").textContent = gpu?.name || (managed ? "计算卡未观测到" : "显示卡未观测到");
@@ -88,7 +103,16 @@ function gpuCard(prefix, gpu, data, managed) {
   $(prefix + "Util").style.setProperty("--value", gpu?.utilization_pct || 0);
   $(prefix + "Util").querySelector("strong").textContent = gpu ? pct(gpu.utilization_pct) : "—";
   $(prefix + "Temp").textContent = gpu?.temperature_c == null ? "—" : `${gpu.temperature_c} °C`;
-  if (managed) { const reserve = gpu ? Math.max(data.safety_floor_mib, Math.ceil(gpu.total_mib * data.safety_ratio)) : data.safety_floor_mib; $("managedReserve").textContent = `安全余量 ${mib(reserve)}`; $("managedDriver").textContent = gpu?.driver || "—"; $("managedAdmission").textContent = data.allocation_enabled ? "规则控制" : "暂停"; }
+  if (managed) {
+    const reserve = gpu ? Math.max(data.safety_floor_mib, Math.ceil(gpu.total_mib * data.safety_ratio)) : data.safety_floor_mib;
+    const owners = brokerRegisteredOwners(data);
+    $("managedReserve").textContent = `安全余量 ${mib(reserve)}`;
+    $("managedDriver").textContent = gpu?.driver || "—";
+    $("managedAdmission").textContent = data.allocation_enabled ? "规则控制" : "暂停";
+    $("managedOwner").textContent = owners.length ? owners.join("；") : "无活动登记 · 实际 Owner 未知";
+    const fresh = !!(data.snapshot?.ok && gpu && Date.now() / 1000 - data.snapshot.timestamp <= 10);
+    $("managedObserved").textContent = fresh ? `${mib(gpu.used_mib)} 显存 · ${pct(gpu.utilization_pct)} 利用率` : "遥测缺失或过期";
+  }
 }
 function renderChart() {
   const s = state.history, empty = !s || s.length < 2;
@@ -112,9 +136,22 @@ function renderSchedule(data) {
   $("scheduleBody").innerHTML = rows.length ? rows.join("") : "暂无运行任务或等待许可；项目接入后显示队列。";
 }
 function renderAlerts(data) {
-  $("alertCount").textContent = n(data.alerts.length);
-  $("alertsBody").className = data.alerts.length ? "stack-list" : "stack-list empty-state";
-  $("alertsBody").innerHTML = data.alerts.length ? data.alerts.map((a) => `<div class="stack-item"><div><strong>${esc(a.text)}</strong><small>${esc(a.code)}</small></div><span class="pill ${a.level === "critical" ? "red-pill" : a.level === "warning" ? "amber-pill" : "muted-pill"}">${a.level === "critical" ? "阻断" : a.level === "warning" ? "注意" : "提示"}</span></div>`).join("") : "当前没有需要处理的告警。";
+  const snap = data.snapshot || {};
+  const gpu = (snap.gpus || []).find((card) => card.uuid === data.managed_gpu_uuid);
+  const fresh = !!(snap.ok && gpu && Date.now() / 1000 - snap.timestamp <= 10);
+  // Idle GPUs still use VRAM for driver/display bookkeeping. Warn only when
+  // the unexplained load is material; the owner label remains unknown either way.
+  const observedOccupied = gpu && (
+    Number(gpu.used_mib || 0) >= Math.max(1024, Number(gpu.total_mib || 0) * 0.1) ||
+    Number(gpu.utilization_pct || 0) >= 10
+  );
+  const unregisteredLoad = fresh && observedOccupied && brokerRegisteredOwners(data).length === 0
+    ? [{ code: "UNATTRIBUTED_GPU_USAGE", level: "warning", text: "受管 GPU 有明显整卡负载，但 Broker 没有活动 Owner 登记；可能是未接入路径或驻留模型，具体项目/进程无法由此确认。" }]
+    : [];
+  const alerts = [...(data.alerts || []), ...unregisteredLoad];
+  $("alertCount").textContent = n(alerts.length);
+  $("alertsBody").className = alerts.length ? "stack-list" : "stack-list empty-state";
+  $("alertsBody").innerHTML = alerts.length ? alerts.map((a) => `<div class="stack-item"><div><strong>${esc(a.text)}</strong><small>${esc(a.code)}</small></div><span class="pill ${a.level === "critical" ? "red-pill" : a.level === "warning" ? "amber-pill" : "muted-pill"}">${a.level === "critical" ? "阻断" : a.level === "warning" ? "注意" : "提示"}</span></div>`).join("") : "当前没有需要处理的告警。";
 }
 function renderProjects(data, now) {
   $("projectGrid").innerHTML = data.projects.map((p) => {
