@@ -7,7 +7,7 @@
 | 方法与路径 | 请求体 | 含义 |
 | --- | --- | --- |
 | `GET /v1/owner` | 无 | 只读登记摘要，不触发新观察；证据过期时签名返回 `UNKNOWN`，保留最后 Owner 身份供核查，不据此改变持久状态或允许 GPU 提交 |
-| `POST /v1/owner/observe` | 无 | 直接采集三项目与整卡事实，返回 `FREE`、`OWNED` 或 `UNKNOWN` |
+| `POST /v1/owner/observe` | 无 | 正常状态采集当前状态相关项目与整卡；启动或 `UNKNOWN` 恢复采集三项目与整卡，返回 `FREE`、`OWNED` 或 `UNKNOWN` |
 | `POST /v1/owner/acquire` | `{"owner_instance":"..."}` | 申请独占；同一随机实例 ID 用于安全重试 |
 | `POST /v1/owner/release` | `{"owner_instance":"..."}` | 声明本项目已可交接；服务仍会直接核实，不能仅凭声明释放 |
 

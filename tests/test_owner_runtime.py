@@ -96,6 +96,15 @@ def test_local_observer_fetches_three_fresh_authenticated_facts(tmp_path):
         assert identity(settings.admin_token) == "admin"
         assert identity("unknown") is None
 
+        servers[2].tamper = True
+        scoped = LocalOwnerObserver(settings, monitor=FakeMonitor())(
+            frozenset({"h3"})
+        )
+        assert set(scoped.projects) == {"h3"}
+        with pytest.raises(ValueError, match="signature invalid"):
+            LocalOwnerObserver(settings, monitor=FakeMonitor())()
+        servers[2].tamper = False
+
         servers[0].tamper = True
         with pytest.raises(ValueError, match="signature invalid"):
             LocalOwnerObserver(settings, monitor=FakeMonitor())()

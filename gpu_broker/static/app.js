@@ -148,10 +148,11 @@ function markOwnerSnapshotUnavailable() {
   guidance.textContent = owner.last_observed_at
     ? `刚才未能读取本机服务。上次成功观察为 ${clock(owner.last_observed_at)}；当前 Owner 状态未知，等待连接恢复后再确认。`
     : "刚才未能读取本机服务，因此无法确认 Owner 状态。等待连接恢复后再启动新的重型任务。";
-  renderOwnerEvidence(owner);
+  renderOwnerEvidence(owner, true);
 }
-function renderOwnerEvidence(owner = {}) {
+function renderOwnerEvidence(owner = {}, forceUnknown = false) {
   const labels = { h3: "H3 直接观察", live: "Live 直接观察", manga: "Manga 直接观察", gpu: "GPU · NVML 直接遥测" };
+  const activeState = forceUnknown || owner.stale === true ? "UNKNOWN" : owner.state;
   const maxAge = Number(owner.evidence_max_age_seconds);
   const freshnessWindow = Number.isFinite(maxAge) && maxAge > 0 ? maxAge : 10;
   for (const [source, label] of Object.entries(labels)) {
@@ -161,14 +162,18 @@ function renderOwnerEvidence(owner = {}) {
     const timestamp = evidence?.observed_at;
     const hasTimestamp = typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0;
     const ageSeconds = hasTimestamp ? Date.now() / 1000 - timestamp : null;
-    const fresh = evidence?.fresh === true && evidence?.state === "FRESH"
+    const fresh = !forceUnknown && evidence?.fresh === true && evidence?.state === "FRESH"
       && ageSeconds !== null && ageSeconds >= 0 && ageSeconds <= freshnessWindow;
+    const required = owner.configured !== true || activeState === "UNKNOWN"
+      || source === "gpu" || (activeState === "OWNED" && source === owner.owner_project);
     const status = row.querySelector(".evidence-state");
     const time = row.querySelector(".evidence-time");
     row.querySelector("span").textContent = label;
-    status.className = `evidence-state ${fresh ? "fresh" : "unknown"}`;
-    status.textContent = fresh
-      ? "证据新鲜"
+    status.className = `evidence-state ${!required ? "optional" : fresh ? "fresh" : "unknown"}`;
+    status.textContent = forceUnknown ? "UNKNOWN · 读取失败"
+      : !required
+      ? fresh ? "证据新鲜 · 按需观察" : "按需观察 · 非本次必需"
+      : fresh ? "证据新鲜"
       : evidence?.reason === "EXPIRED" || (ageSeconds !== null && ageSeconds > freshnessWindow)
         ? "UNKNOWN · 已过期"
         : evidence?.reason === "INVALID_TIMESTAMP" || (ageSeconds !== null && ageSeconds < 0)

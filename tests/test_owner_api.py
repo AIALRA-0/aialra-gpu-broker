@@ -70,7 +70,7 @@ def test_slow_direct_observation_does_not_block_health(tmp_path):
     identities = {value: name for name, value in tokens.items()}
     identities[admin_token] = "admin"
 
-    def slow_observation():
+    def slow_observation(projects):
         started.set()
         finish.wait(timeout=2)
         now = time.time()
@@ -80,7 +80,7 @@ def test_slow_direct_observation_does_not_block_health(tmp_path):
                     project=project, status=ObservationState.IDLE, observed_at=now,
                     model_released=True, child_processes_exited=True, entry_fenced=True,
                 )
-                for project in ("h3", "live", "manga")
+                for project in projects
             },
             gpu=GpuObservation(observed_at=now, healthy=True, safe_idle=True),
         )
@@ -121,7 +121,7 @@ def test_loopback_owner_contract_uses_mutual_hmac_and_read_only_snapshot(tmp_pat
     }
     admin_token = "admin-secret-" + "a" * 40
 
-    def observe():
+    def observe(projects):
         nonlocal probes
         probes += 1
         now = time.time()
@@ -137,7 +137,7 @@ def test_loopback_owner_contract_uses_mutual_hmac_and_read_only_snapshot(tmp_pat
                     child_processes_exited=not (active_window and project == "h3"),
                     entry_fenced=not (active_window and project == "h3"),
                 )
-                for project in ("h3", "live", "manga")
+                for project in projects
             },
             gpu=GpuObservation(observed_at=now, healthy=True, safe_idle=True),
         )
@@ -258,14 +258,14 @@ def test_owner_api_rejects_tampered_body_and_stale_timestamp(tmp_path):
     }
     admin_token = "admin-secret-" + "a" * 40
 
-    def observe():
+    def observe(projects):
         now = time.time()
         projects = {
             name: ProjectObservation(
                 name, ObservationState.IDLE, now, model_released=True,
                 child_processes_exited=True, entry_fenced=True,
             )
-            for name in tokens
+            for name in projects
         }
         return ObservationBundle(projects, GpuObservation(now, True, True))
 
@@ -305,14 +305,14 @@ def test_owner_api_rejects_replayed_nonce_and_forged_response(tmp_path):
     }
     admin_token = "admin-secret-" + "a" * 40
 
-    def observe():
+    def observe(projects):
         now = time.time()
         projects = {
             name: ProjectObservation(
                 name, ObservationState.IDLE, now, model_released=True,
                 child_processes_exited=True, entry_fenced=True,
             )
-            for name in tokens
+            for name in projects
         }
         return ObservationBundle(projects, GpuObservation(now, True, True))
 

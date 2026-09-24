@@ -30,8 +30,8 @@ GET /internal/gpu/owner-observe?nonce=<随机挑战>
 
 `IDLE` 是项目观察端对本项目已经可以交接的整体确认：本窗口入口已封闭，旧 `owner_instance` 不会再发起下一 GPU 阶段；后端没有未完成 GPU 调用；本项目模型已释放或受控进程已确认不会继续占用 4080。`entry_fenced` 仍须明确为 `true`；`model_released` 和 `child_processes_exited` 是可选诊断细项，不要求三个项目都提供同一种证明，但已提供的 `false` 会与 `IDLE` 矛盾并阻止交接。无法确认整体 `IDLE` 时返回 `UNKNOWN`，不能靠留空诊断字段猜测空闲。H3 视频两个阶段之间即使显存暂低，也要报告 `BUSY`；Live 队列中尚未领取的任务可以等待下一窗口，但当前窗口不能在释放后继续领任务；Manga 导入线程和生成队列须共用同一入口封闭判断。
 
-项目主动 `release` 之前先封闭该窗口入口，再等待后端停止并卸载。Coordinator 收到 release 后会重新调用三个项目的观察接口并读取整卡；只有全部直接事实为安全空闲，才会返回 `RELEASED`。观察超时或矛盾时返回 `UNKNOWN`，不会取消已有计算。
+项目主动 `release` 之前先封闭该窗口入口，再等待后端停止并卸载。稳定 `OWNED` 下，Coordinator 重新观察当前 Owner 与整卡；当前 Owner 报告 `IDLE`、入口已封闭且整卡安全，才返回 `RELEASED`。稳定 `FREE` 下，新 acquire 观察申请项目与整卡。启动、重启、`UNKNOWN` 或相关状态证据过期时仍要求三项目与整卡四路新鲜事实；局部观察不能把 `UNKNOWN` 变成 `FREE`。必要观察超时或矛盾时返回 `UNKNOWN`，不会取消已有计算。
 
 Owner 服务使用单独的 [本机 HTTP 应用](../gpu_broker/owner_api.py)，CLI 只绑定 `127.0.0.1`，默认端口 `18767`；原公开 Broker 与隧道不能转发其修改接口。运行配置 `owner.json` 必须显式提供 GPU UUID、经过全空闲实测的 `idle_max_mib`、`idle_max_utilization_pct` 和三个回环观察 URL；缺少配置时服务拒绝启动。项目凭据从受限的现有 `tokens.json` 读取，接口身份映射是旧 `minimax→h3`、`live_translate→live`、`manga→manga`，不复用旧 Broker 的任务表和许可状态。
 
-独立 Owner 进程每 5 秒尝试一次直接观察，以免长任务期间没有项目主动调用 `observe()` 而使仪表盘证据过期。轮询只读取项目与整卡事实并更新三态；观察失败会使新的准入等待或让证据过期，不会向 ComfyUI、Live Worker 或 Manga 模型服务发送取消命令。手动 `acquire` 与 `release` 仍各自重新采集事实，不能使用轮询缓存直接放行或释放。
+独立 Owner 进程每 5 秒尝试一次相关来源的直接观察，以免长任务期间没有项目主动调用 `observe()` 而使仪表盘状态证据过期。稳定 `FREE` 只采整卡，稳定 `OWNED` 采当前 Owner 与整卡；`UNKNOWN` 做四路核实。未采样项目的分来源时间戳保持原值，网页不得显示成新鲜观察。必要来源失败会使新的准入等待或让状态证据过期，不会向 ComfyUI、Live Worker 或 Manga 模型服务发送取消命令。手动 `acquire` 与 `release` 仍各自重新采集事实，不能使用轮询缓存直接放行或释放。

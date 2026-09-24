@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -56,6 +57,7 @@ class FakeProbe:
         }
         self.gpu_healthy = True
         self.gpu_safe_idle = True
+        self.failed_projects: set[str] = set()
         self.returned: ObservationBundle | None = None
         self.barrier: threading.Barrier | None = None
         self._lock = threading.Lock()
@@ -79,11 +81,17 @@ class FakeProbe:
             "entry_fenced": entry_fenced,
         }
 
-    def __call__(self) -> ObservationBundle:
+    def __call__(self, projects=frozenset(("h3", "live", "manga"))) -> ObservationBundle:
         with self._lock:
             self.calls += 1
+            if self.failed_projects.intersection(projects):
+                raise RuntimeError("requested project observer is unavailable")
             if self.returned is not None:
-                return self.returned
+                return ObservationBundle(
+                    {name: item for name, item in self.returned.projects.items()
+                     if name in projects},
+                    self.returned.gpu,
+                )
             observed_at = self.clock.advance(0.01)
             bundle = ObservationBundle(
                 projects={
@@ -92,7 +100,7 @@ class FakeProbe:
                         observed_at=observed_at,
                         **values,
                     )
-                    for project, values in self.statuses.items()
+                    for project, values in self.statuses.items() if project in projects
                 },
                 gpu=GpuObservation(
                     observed_at=observed_at,
@@ -169,10 +177,15 @@ def test_unknown_needs_matching_owner_and_rejects_other_project_conflict(tmp_pat
     probe.set_project("h3", ObservationState.BUSY, "h3-current")
     probe.set_project("manga", ObservationState.BUSY, "manga-unregistered")
     probe.gpu_safe_idle = False
+    # Normal polling samples the current Owner and GPU. A telemetry fault
+    # enters UNKNOWN, where all project observers are consulted again.
+    probe.gpu_healthy = False
     conflict = owner.observe("live-key")
     assert conflict.state is OwnerState.UNKNOWN
     assert conflict.owner_project == "h3"
 
+    probe.gpu_healthy = True
+    assert owner.observe("live-key").state is OwnerState.UNKNOWN
     probe.set_project("manga", ObservationState.IDLE)
     recovered = owner.observe("h3-key")
     assert recovered.state is OwnerState.OWNED
@@ -236,6 +249,93 @@ def test_adapter_idle_summary_does_not_need_optional_diagnostic_fields(tmp_path)
     assert released.state is OwnerState.FREE
 
 
+def test_stable_handoff_ignores_unrelated_stopped_observer(tmp_path):
+    clock = FakeClock()
+    probe = FakeProbe(clock)
+    owner = make_owner(tmp_path, probe, clock)
+    assert owner.observe("h3-key").state is OwnerState.FREE
+
+    # Initial recovery established all three sealed entries. Manga later
+    # stops; H3 and Live still use their own gate and the direct GPU sample.
+    probe.failed_projects.add("manga")
+    first = owner.acquire("h3-key", "h3-with-manga-down")
+    assert first.decision is Decision.ACQUIRED
+    probe.set_project("h3", ObservationState.BUSY, "h3-with-manga-down")
+    assert owner.observe("live-key").state is OwnerState.OWNED
+    probe.set_project("h3", ObservationState.IDLE, "h3-with-manga-down")
+    assert owner.release("h3-key", "h3-with-manga-down").decision is Decision.RELEASED
+    assert owner.observe("live-key").state is OwnerState.FREE
+    assert owner.acquire("live-key", "live-with-manga-down").decision is Decision.ACQUIRED
+
+    with sqlite3.connect(tmp_path / "owner.sqlite3") as connection:
+        sources = dict(connection.execute(
+            "SELECT source, observed_at FROM owner_evidence_versions"
+        ))
+    assert sources["manga"] < sources["live"]
+
+
+def test_applicant_observer_loss_requires_full_recovery(tmp_path):
+    clock = FakeClock()
+    probe = FakeProbe(clock)
+    owner = make_owner(tmp_path, probe, clock)
+    assert owner.observe("h3-key").state is OwnerState.FREE
+
+    probe.failed_projects.add("h3")
+    assert owner.acquire("h3-key", "h3-unavailable").state is OwnerState.UNKNOWN
+    probe.failed_projects.remove("h3")
+    probe.failed_projects.add("manga")
+    # An H3+GPU sample cannot repair a state already marked UNKNOWN.
+    assert owner.acquire("h3-key", "h3-unavailable").state is OwnerState.UNKNOWN
+    probe.failed_projects.clear()
+    assert owner.acquire("h3-key", "h3-unavailable").decision is Decision.ACQUIRED
+
+
+def test_expired_free_state_cannot_skip_full_recovery(tmp_path):
+    clock = FakeClock()
+    probe = FakeProbe(clock)
+    owner = make_owner(tmp_path, probe, clock)
+    instance = "h3-after-expiry"
+    assert owner.observe("h3-key").state is OwnerState.FREE
+    clock.advance(11)
+    probe.failed_projects.add("manga")
+    assert owner.acquire("h3-key", instance).state is OwnerState.UNKNOWN
+    probe.failed_projects.clear()
+    assert owner.acquire("h3-key", instance).decision is Decision.ACQUIRED
+
+
+def test_concurrent_scoped_acquire_still_has_one_winner(tmp_path):
+    clock = FakeClock()
+    probe = FakeProbe(clock)
+    owner = make_owner(tmp_path, probe, clock)
+    assert owner.observe("h3-key").state is OwnerState.FREE
+    probe.barrier = threading.Barrier(2)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [future.result(timeout=5) for future in (
+            pool.submit(owner.acquire, "h3-key", "h3-scoped-race"),
+            pool.submit(owner.acquire, "live-key", "live-scoped-race"),
+        )]
+
+    assert sum(item.decision is Decision.ACQUIRED for item in results) == 1
+
+
+def test_current_owner_loss_enters_unknown_and_requires_full_recovery(tmp_path):
+    clock = FakeClock()
+    probe = FakeProbe(clock)
+    owner = make_owner(tmp_path, probe, clock)
+    assert owner.acquire("h3-key", "h3-lost-observer").decision is Decision.ACQUIRED
+    probe.set_project("h3", ObservationState.BUSY, "h3-lost-observer")
+    probe.failed_projects.add("h3")
+    assert owner.observe("live-key").state is OwnerState.UNKNOWN
+    probe.failed_projects.remove("h3")
+    probe.failed_projects.add("manga")
+    assert owner.observe("live-key").state is OwnerState.UNKNOWN
+    probe.failed_projects.clear()
+    recovered = owner.observe("live-key")
+    assert recovered.state is OwnerState.OWNED
+    assert recovered.owner_project == "h3"
+
+
 def test_explicit_release_contradiction_still_freezes_new_work(tmp_path):
     clock = FakeClock()
     probe = FakeProbe(clock)
@@ -252,6 +352,50 @@ def test_explicit_release_contradiction_still_freezes_new_work(tmp_path):
     assert owner.acquire("live-key", "live-must-wait").decision is Decision.UNKNOWN
 
 
+def test_owner_release_rejects_other_local_instance_identity(tmp_path):
+    clock = FakeClock()
+    probe = FakeProbe(clock)
+    owner = make_owner(tmp_path, probe, clock)
+    assert owner.acquire("h3-key", "h3-current-instance").decision is Decision.ACQUIRED
+    probe.set_project("h3", ObservationState.IDLE, "h3-different-instance")
+    result = owner.release("h3-key", "h3-current-instance")
+    assert result.state is OwnerState.UNKNOWN
+    assert result.decision is Decision.UNKNOWN
+
+
+def test_unknown_recovery_rejects_other_recorded_owner_instance(tmp_path):
+    clock = FakeClock()
+    probe = FakeProbe(clock)
+    owner = make_owner(tmp_path, probe, clock)
+    assert owner.acquire("h3-key", "h3-before-restart").decision is Decision.ACQUIRED
+    restarted = make_owner(tmp_path, probe, clock)
+    probe.set_project("h3", ObservationState.IDLE, "h3-unrelated-window")
+    result = restarted.release("h3-key", "h3-before-restart")
+    assert result.decision is Decision.UNKNOWN
+    assert result.state is OwnerState.UNKNOWN
+
+
+def test_free_acquire_rejects_other_applicant_instance(tmp_path):
+    clock = FakeClock()
+    probe = FakeProbe(clock)
+    owner = make_owner(tmp_path, probe, clock)
+    assert owner.observe("h3-key").state is OwnerState.FREE
+    probe.set_project("h3", ObservationState.IDLE, "h3-someone-else")
+    result = owner.acquire("h3-key", "h3-new-request")
+    assert result.decision is Decision.UNKNOWN
+    assert result.state is OwnerState.UNKNOWN
+
+
+def test_free_acquire_accepts_own_fenced_pending_instance(tmp_path):
+    clock = FakeClock()
+    probe = FakeProbe(clock)
+    owner = make_owner(tmp_path, probe, clock)
+    assert owner.observe("h3-key").state is OwnerState.FREE
+    probe.set_project("manga", ObservationState.IDLE, "manga-pending-request")
+    result = owner.acquire("manga-key", "manga-pending-request")
+    assert result.decision is Decision.ACQUIRED
+
+
 def test_old_observation_cannot_overwrite_newer_observation(tmp_path):
     clock = FakeClock()
     probe = FakeProbe(clock)
@@ -262,10 +406,13 @@ def test_old_observation_cannot_overwrite_newer_observation(tmp_path):
     continue_old = threading.Event()
     old_bundle = probe()
 
-    def delayed_old_probe():
+    def delayed_old_probe(projects):
         entered.set()
         assert continue_old.wait(timeout=3)
-        return old_bundle
+        return ObservationBundle(
+            {name: item for name, item in old_bundle.projects.items() if name in projects},
+            old_bundle.gpu,
+        )
 
     # Hold an older in-flight result while a later request records newer facts.
     owner._observation_provider = delayed_old_probe
@@ -286,7 +433,7 @@ def test_sample_expiring_while_sqlite_writer_lock_waits_cannot_admit(tmp_path, m
     clock = FakeClock()
     probe = FakeProbe(clock)
     owner = make_owner(tmp_path, probe, clock)
-    generation = owner._begin_observation()
+    generation, _ = owner._begin_observation(Decision.ACQUIRED, "h3")
     sampled = probe()
     original_connect = owner._connect
 
@@ -305,7 +452,9 @@ def test_sample_expiring_while_sqlite_writer_lock_waits_cannot_admit(tmp_path, m
 
     monkeypatch.setattr(owner, "_connect", lambda: DelayedConnection(original_connect()))
     result = owner._apply_observation(
-        generation, sampled, Decision.ACQUIRED, "h3", "h3-lock-delayed-0001"
+        generation,
+        sampled,
+        Decision.ACQUIRED, "h3", "h3-lock-delayed-0001"
     )
     assert result.state is OwnerState.UNKNOWN
     assert result.decision is Decision.UNKNOWN
@@ -500,6 +649,7 @@ def test_three_project_handoff_waits_for_direct_release_proof(tmp_path):
         probe.gpu_safe_idle = True
         released = owner.release(credentials[current_project], current_instance)
         assert released.decision is Decision.RELEASED
+        probe.set_project(current_project, ObservationState.IDLE)
         acquired = owner.acquire(credentials[next_project], next_instance)
         assert acquired.decision is Decision.ACQUIRED
         assert acquired.owner_project == next_project

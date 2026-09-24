@@ -3,7 +3,8 @@
 This module deliberately has no HTTP server, process control, GPU client, or
 dependency on the legacy broker tables. Callers inject both project
 authentication and a trusted provider that gathers current observations from
-the three project adapters and the GPU sampler.
+the requested project adapters and the GPU sampler. Normal scoped checks rely
+on all three GPU entry gates having been verified at production cutover.
 """
 
 from __future__ import annotations
@@ -99,7 +100,7 @@ class GpuObservation:
 
 @dataclass(frozen=True)
 class ObservationBundle:
-    """One provider response containing all three project and GPU observations."""
+    """Fresh observations for the requested projects and the managed GPU."""
 
     projects: Mapping[str, ProjectObservation]
     gpu: GpuObservation
@@ -117,7 +118,7 @@ class OwnerResult:
 
 
 Authenticator = Callable[[str], str | None]
-ObservationProvider = Callable[[], ObservationBundle]
+ObservationProvider = Callable[[frozenset[str]], ObservationBundle]
 Clock = Callable[[], float]
 
 
@@ -128,11 +129,10 @@ class OwnerCoordinator:
         database_path: Dedicated SQLite file for Owner v1.
         gpu_uuid: Stable UUID used as the unique Owner row key.
         observation_provider: Trusted callback returning fresh observations for
-            exactly h3, live, manga, and the managed GPU. The provider must
-            obtain direct, current samples (the later API adapter will use a
-            per-request challenge); timestamps use the host wall clock. A
-            repeated or older sample is rejected because it cannot establish
-            a fresh release or admission fact.
+            the requested projects and the managed GPU. UNKNOWN recovery
+            requests all three projects; stable operations request only the
+            relevant project. Timestamps use the host wall clock. A repeated
+            or older sample is rejected.
         authenticator: Callback mapping a project credential to one canonical
             project name, or ``None`` when invalid. No project identity is
             accepted from an operation argument.
@@ -149,7 +149,8 @@ class OwnerCoordinator:
         ``acquire(credential, owner_instance)`` atomically claims a proven FREE
         row, or returns WAITING / UNKNOWN.
         ``release(credential, owner_instance)`` requires the matching active
-        claim and fresh all-project plus GPU release proof.
+        claim and fresh Owner plus GPU release proof. UNKNOWN recovery still
+        requires all-project plus GPU proof.
 
     The coordinator exposes no task cancellation or process termination
     operation. Database writes use ``BEGIN IMMEDIATE`` so independent threads
@@ -188,8 +189,8 @@ class OwnerCoordinator:
         """Refresh observations and return the resulting owner summary."""
 
         project = self._authenticate(credential)
-        generation = self._begin_observation()
-        bundle = self._collect()
+        generation, projects = self._begin_observation(Decision.OBSERVED, project)
+        bundle = self._collect(projects)
         return self._apply_observation(generation, bundle, Decision.OBSERVED, project)
 
     def snapshot(self, credential: str) -> OwnerResult:
@@ -234,22 +235,22 @@ class OwnerCoordinator:
         if initial is not None:
             return initial
 
-        generation = self._begin_observation()
-        bundle = self._collect()
+        generation, projects = self._begin_observation(Decision.ACQUIRED, project)
+        bundle = self._collect(projects)
         return self._apply_observation(
             generation, bundle, Decision.ACQUIRED, project, owner_instance
         )
 
     def release(self, credential: str, owner_instance: str) -> OwnerResult:
-        """Release the matching claim only after current all-project proof."""
+        """Release the matching claim only after current handoff proof."""
 
         project = self._authenticate(credential)
         self._validate_instance(owner_instance)
-        generation, initial = self._begin_release(project, owner_instance)
+        generation, projects, initial = self._begin_release(project, owner_instance)
         if initial is not None:
             return initial
 
-        bundle = self._collect()
+        bundle = self._collect(projects)
         return self._apply_observation(
             generation, bundle, Decision.RELEASED, project, owner_instance
         )
@@ -359,48 +360,82 @@ class OwnerCoordinator:
 
     def _begin_release(
         self, project: str, owner_instance: str
-    ) -> tuple[int | None, OwnerResult | None]:
+    ) -> tuple[int | None, frozenset[str], OwnerResult | None]:
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = self._row(connection)
             claim = self._claim(connection, owner_instance)
             if claim is None or claim["project"] != project:
                 connection.commit()
-                return None, self._result(row, project, Decision.REJECTED, "not_owner_instance")
+                return None, frozenset(), self._result(
+                    row, project, Decision.REJECTED, "not_owner_instance"
+                )
             if claim["released_at"] is not None:
                 connection.commit()
                 if row["owner_instance"] is not None:
-                    return None, self._result(
+                    return None, frozenset(), self._result(
                         row, project, Decision.REJECTED, "stale_owner_instance"
                     )
-                return None, self._result(row, project, Decision.RELEASED, "already_released")
+                return None, frozenset(), self._result(
+                    row, project, Decision.RELEASED, "already_released"
+                )
             if (row["owner_project"], row["owner_instance"]) != (project, owner_instance):
                 connection.commit()
-                return None, self._result(row, project, Decision.REJECTED, "stale_owner_instance")
+                return None, frozenset(), self._result(
+                    row, project, Decision.REJECTED, "stale_owner_instance"
+                )
 
+            row = self._expire_stale_state(connection, row)
+            projects = self._required_projects(row, Decision.RELEASED, project)
             generation = int(row["observation_generation"]) + 1
             connection.execute(
                 "UPDATE owner_state SET observation_generation = ? WHERE gpu_uuid = ?",
                 (generation, self.gpu_uuid),
             )
             connection.commit()
-            return generation, None
+            return generation, projects, None
 
-    def _begin_observation(self) -> int:
+    def _begin_observation(
+        self, operation: Decision, project: str
+    ) -> tuple[int, frozenset[str]]:
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = self._row(connection)
+            row = self._expire_stale_state(connection, self._row(connection))
+            projects = self._required_projects(row, operation, project)
             generation = int(row["observation_generation"]) + 1
             connection.execute(
                 "UPDATE owner_state SET observation_generation = ? WHERE gpu_uuid = ?",
                 (generation, self.gpu_uuid),
             )
             connection.commit()
-            return generation
+            return generation, projects
 
-    def _collect(self) -> ObservationBundle | None:
+    def _expire_stale_state(self, connection: sqlite3.Connection, row: sqlite3.Row) -> sqlite3.Row:
+        if row["state"] == OwnerState.UNKNOWN.value:
+            return row
+        now = self._clock()
+        sampled_at = row["last_observed_at"]
+        if (not _valid_timestamp(now) or not _valid_timestamp(sampled_at)
+                or not 0 <= now - sampled_at <= self._max_observation_age_seconds):
+            self._set_unknown(connection, row)
+            return self._row(connection)
+        return row
+
+    @staticmethod
+    def _required_projects(row: sqlite3.Row, operation: Decision,
+                           project: str) -> frozenset[str]:
+        if row["state"] == OwnerState.UNKNOWN.value:
+            return PROJECTS
+        if row["state"] == OwnerState.OWNED.value:
+            owner = row["owner_project"]
+            return frozenset({owner}) if owner in PROJECTS else PROJECTS
+        if operation == Decision.ACQUIRED:
+            return frozenset({project})
+        return frozenset()
+
+    def _collect(self, projects: frozenset[str]) -> ObservationBundle | None:
         try:
-            bundle = self._observation_provider()
+            bundle = self._observation_provider(projects)
             return bundle if isinstance(bundle, ObservationBundle) else None
         except Exception:
             return None
@@ -432,7 +467,10 @@ class OwnerCoordinator:
                     self._row(connection), project, Decision.UNKNOWN, "observation_unavailable"
                 )
 
-            evidence_problem, sampled_at = self._validate_evidence(connection, bundle, now)
+            required = self._required_projects(row, operation, project)
+            evidence_problem, sampled_at = self._validate_evidence(
+                connection, bundle, now, required
+            )
             if evidence_problem is not None:
                 self._set_unknown(connection, row)
                 connection.commit()
@@ -443,24 +481,53 @@ class OwnerCoordinator:
             self._save_evidence_versions(connection, bundle, sampled_at)
             current = self._row(connection)
             active_claim = self._active_claim_for_row(connection, current)
-            all_idle = self._all_idle_proof(bundle)
-            owner_confirmed = self._owner_confirmed(current, active_claim, bundle)
+            all_idle = set(bundle.projects) == PROJECTS and self._all_idle_proof(bundle)
+            recorded_project = current["owner_project"]
+            if all_idle and recorded_project in PROJECTS:
+                reported_instance = bundle.projects[recorded_project].owner_instance
+                all_idle = reported_instance in {None, current["owner_instance"]}
+            gpu_safe = bundle.gpu.healthy and bundle.gpu.safe_idle
+            applicant_idle = (
+                project in bundle.projects
+                and self._idle_observation(bundle.projects[project])
+                and bundle.projects[project].owner_instance in {None, owner_instance}
+            )
+            owner_project = current["owner_project"]
+            owner_fact = bundle.projects.get(owner_project)
+            owner_idle = (
+                owner_fact is not None
+                and owner_fact.owner_instance in {None, current["owner_instance"]}
+                and self._idle_observation(owner_fact)
+            )
+            owner_busy = (
+                owner_fact is not None and owner_fact.status == ObservationState.BUSY
+                and owner_fact.owner_instance == current["owner_instance"]
+            )
+            claim_matches = (
+                active_claim is not None
+                and active_claim["project"] == owner_project
+            )
+            owner_confirmed = (
+                self._owner_confirmed(current, active_claim, bundle)
+                if current["state"] == OwnerState.UNKNOWN.value else False
+            )
             next_state = current["state"]
             if current["state"] == OwnerState.FREE.value:
-                next_state = OwnerState.FREE.value if all_idle else OwnerState.UNKNOWN.value
+                free_safe = gpu_safe and (
+                    operation != Decision.ACQUIRED or applicant_idle
+                )
+                next_state = OwnerState.FREE.value if free_safe else OwnerState.UNKNOWN.value
             elif current["state"] == OwnerState.OWNED.value:
                 # An active claim is not implicitly released just because a
                 # polling pass finds the entry fenced and the GPU idle. The
                 # project still has to request a verified handoff. A restart
                 # starts in UNKNOWN, where fresh all-idle facts can recover
                 # FREE without trusting a lost client response.
-                clean_but_unreleased = (
-                    all_idle and active_claim is not None
-                    and active_claim["project"] == current["owner_project"]
-                )
+                clean_but_unreleased = claim_matches and owner_idle and gpu_safe
                 next_state = (
                     OwnerState.OWNED.value
-                    if owner_confirmed or clean_but_unreleased
+                    if (claim_matches and owner_busy and bundle.gpu.healthy)
+                    or clean_but_unreleased
                     else OwnerState.UNKNOWN.value
                 )
             else:  # UNKNOWN
@@ -498,7 +565,11 @@ class OwnerCoordinator:
                 )
 
             if operation == Decision.RELEASED:
-                if all_idle and (current["state"] in {OwnerState.OWNED.value, OwnerState.UNKNOWN.value}) \
+                release_safe = (
+                    all_idle if current["state"] == OwnerState.UNKNOWN.value
+                    else claim_matches and owner_idle and gpu_safe
+                )
+                if release_safe and (current["state"] in {OwnerState.OWNED.value, OwnerState.UNKNOWN.value}) \
                         and (current["owner_project"], current["owner_instance"]) == (project, owner_instance):
                     connection.execute(
                         """UPDATE owner_claims SET released_at = ?
@@ -573,17 +644,18 @@ class OwnerCoordinator:
             return result
 
     def _validate_evidence(
-        self, connection: sqlite3.Connection, bundle: ObservationBundle, now: float
+        self, connection: sqlite3.Connection, bundle: ObservationBundle, now: float,
+        required_projects: frozenset[str],
     ) -> tuple[str | None, float]:
         if not _valid_timestamp(now):
             return "invalid_clock", 0.0
-        if not isinstance(bundle.projects, Mapping) or set(bundle.projects) != PROJECTS:
+        if not isinstance(bundle.projects, Mapping) or set(bundle.projects) != required_projects:
             return "incomplete_project_observations", 0.0
         if not isinstance(bundle.gpu, GpuObservation):
             return "missing_gpu_observation", 0.0
 
         timestamps: dict[str, float] = {}
-        for project in sorted(PROJECTS):
+        for project in sorted(required_projects):
             observation = bundle.projects[project]
             if not isinstance(observation, ProjectObservation) or observation.project != project:
                 return "invalid_project_observation", 0.0

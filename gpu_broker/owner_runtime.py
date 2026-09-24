@@ -22,6 +22,7 @@ from pathlib import Path
 
 from .monitor import NvidiaMonitor
 from .owner import (
+    PROJECTS,
     GpuObservation,
     ObservationBundle,
     ObservationState,
@@ -198,12 +199,14 @@ class LocalOwnerObserver:
                        and util <= self.settings.idle_max_utilization_pct),
         )
 
-    def __call__(self) -> ObservationBundle:
+    def __call__(self, projects: frozenset[str] = PROJECTS) -> ObservationBundle:
+        if not isinstance(projects, frozenset) or not projects <= PROJECTS:
+            raise ValueError("requested Owner projects are invalid")
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="owner-observe") as pool:
-            projects = {name: pool.submit(self._project, name) for name in PROJECT_TOKEN_KEYS}
+            pending = {name: pool.submit(self._project, name) for name in projects}
             gpu = pool.submit(self._gpu)
             return ObservationBundle(
-                projects={name: future.result() for name, future in projects.items()},
+                projects={name: future.result() for name, future in pending.items()},
                 gpu=gpu.result(),
             )
 
