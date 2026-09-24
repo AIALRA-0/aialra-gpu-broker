@@ -20,6 +20,7 @@ test = ["pytest==8.4.2", "httpx==0.28.1"]
 
 [project.scripts]
 gpu-broker = "gpu_broker.cli:main"
+gpu-owner = "gpu_broker.owner_cli:main"
 
 [tool.setuptools.packages.find]
 include = ["gpu_broker*"]

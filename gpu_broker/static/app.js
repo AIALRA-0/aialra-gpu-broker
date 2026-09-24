@@ -9,6 +9,7 @@ const pct = (value) => `${Math.max(0, Math.min(100, Number(value || 0)))}%`;
 const clock = (ts) => ts ? new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false }) : "—";
 const shortClock = (ts) => ts ? new Date(ts * 1000).toLocaleTimeString("zh-CN", { hour12: false }) : "—";
 const projectName = { minimax: "MiniMax H3", live_translate: "Live Translate", manga: "Manga / PanelTone" };
+const ownerProjectName = { h3: "H3", live: "Live Translate", manga: "Manga / PanelTone" };
 const statusName = { ACCEPTED: "已登记", WAITING_GPU: "等待 GPU", RUNNING: "运行中", COMMITTING: "保存中", COMPLETED: "已完成", FAILED: "失败", CANCEL_REQUESTED: "取消中", CANCELLED: "已取消", NEEDS_RECOVERY: "需恢复", WAITING: "等待准入", ACTIVE: "已获许可", FINISHED: "已结束", UNCERTAIN: "待核实", READY: "会话就绪", PREPARING: "会话准备中", REQUESTED: "请求中", CLOSING: "关闭中", CLOSED: "已关闭" };
 const reasonName = { WAIT_PAUSED: "观察模式暂停准入", WAIT_RECONCILE: "等待故障核实", WAIT_TELEMETRY: "等待新鲜遥测", WAIT_ACTIVE: "受管 GPU 正被占用", WAIT_REALTIME: "实时会话优先", WAIT_PROJECT_OFFLINE: "项目进程离线", WAIT_VRAM: "显存安全余量不足", PROFILE_NOT_FIT: "画像超出显存容量", WAIT_BATCH: "等待现有任务结束", WAIT_BACKEND_STOP: "等待后端确认停止", HEARTBEAT_LOST: "心跳丢失", OWNER_REPLACED: "进程实例已更换", PREPARE_TIMEOUT: "模型准备超时，待核实", BROKER_RESTART: "服务重启后待核实" };
 const eventName = { TELEMETRY_READY: "遥测恢复", TELEMETRY_LOST: "遥测中断", PROJECT_INSTANCE: "项目进程上线", JOB_REGISTERED: "任务已登记", JOB_STATUS: "任务状态更新", JOB_CANCEL_REQUESTED: "请求取消业务任务", PROFILE_CREATED: "新建画像", PROFILE_UPDATED: "画像变更", PERMIT_REQUESTED: "申请 GPU", PERMIT_GRANTED: "许可已发放", PERMIT_FINISHED: "许可已结束", PERMIT_CANCELLED: "等待许可取消", PERMIT_CANCEL_REQUESTED: "请求取消运行任务", PERMIT_UNCERTAIN: "许可状态待核实", PERMIT_RECONCILED: "许可已核实", SESSION_REQUESTED: "实时会话申请", SESSION_PREPARING: "实时会话准备", SESSION_READY: "实时会话就绪", SESSION_CLOSING: "实时会话关闭中", SESSION_CLOSED: "实时会话已关闭", SESSION_UNCERTAIN: "会话状态待核实", SESSION_RECONCILED: "会话已核实", ALLOCATION_ENABLED: "准入已启用", ALLOCATION_PAUSED: "准入已暂停", BACKUP_CREATED: "校验备份已生成" };
@@ -47,6 +48,7 @@ async function refresh() {
   } catch (error) {
     setConnection(false, "连接或认证失败");
     $("lastUpdate").textContent = `更新失败：${error.message}`;
+    markOwnerSnapshotUnavailable();
     if (/401|令牌|Bearer|Invalid token/.test(error.message)) { sessionStorage.removeItem("gpuBrokerAdminToken"); state.token = ""; modal("tokenModal", true); }
   } finally { state.busy = false; }
 }
@@ -66,18 +68,116 @@ function render(data) {
   $("modeBadge").className = `pill ${data.counts.uncertain || !fresh ? "red-pill" : data.allocation_enabled ? "green-pill" : "amber-pill"}`;
   $("scheduleMode").textContent = mode;
   $("scheduleMode").className = $("modeBadge").className;
-  $("modeDescription").textContent = data.counts.uncertain ? "有状态待核实。新任务准入已冻结，先确认后端停止。" : !fresh ? "受管 GPU 遥测不可用或过期，新的 GPU 许可不会发放。" : data.allocation_enabled ? "仅对已接入的项目调用发放许可；未接入路径仍可绕过。" : "目前只监控，不发放新的 GPU 许可；项目调用尚未统一受控。";
+  const brokerModeDescription = data.counts.uncertain ? "有状态待核实。新任务准入已冻结，先确认后端停止。" : !fresh ? "受管 GPU 遥测不可用或过期，新的 GPU 许可不会发放。" : data.allocation_enabled ? "仅对已接入的项目调用发放许可；未接入路径仍可绕过。" : "目前只监控，不发放新的 GPU 许可；项目调用尚未统一受控。";
+  $("modeDescription").textContent = `Legacy Broker：${brokerModeDescription}`;
   const onlineTimeout = Math.round(data.heartbeat_timeout_seconds ?? 15);
   const activeGrace = Math.round(data.active_heartbeat_grace_seconds ?? 180);
   const activeTimeout = onlineTimeout + activeGrace;
   const prepareTimeout = Math.round(data.session_prepare_timeout_seconds ?? 180);
   $("heartbeatPolicy").textContent = `项目在线 ${onlineTimeout}s · 活跃宽限 +${activeGrace}s（合计 ${activeTimeout}s） · 会话准备 ${prepareTimeout}s`;
-  $("allocationButton").disabled = false;
-  $("allocationButton").textContent = data.allocation_enabled ? "暂停新准入" : "启用 GPU 准入";
-  $("allocationButton").className = data.allocation_enabled ? "danger-button" : "primary-button";
+  const legacyEnableBlocked = data.owner_v1?.configured === true && !data.allocation_enabled;
+  $("allocationButton").disabled = legacyEnableBlocked;
+  $("allocationButton").textContent = legacyEnableBlocked
+    ? "Legacy：旧准入保持关闭"
+    : data.allocation_enabled ? "Legacy：暂停旧准入" : "Legacy：启用旧准入";
+  $("allocationButton").className = legacyEnableBlocked
+    ? "text-button" : data.allocation_enabled ? "danger-button" : "primary-button";
+  $("allocationButton").title = legacyEnableBlocked
+    ? "Owner v1 已建立；旧准入不能从此页面重新启用。回退必须先完成三项目和整卡空闲核查。"
+    : "只更改 Legacy Broker 的旧准入设置，不更改 Owner v1 所有权状态";
   gpuCard("managed", managed, data, true);
   gpuCard("display", display, data, false);
+  renderOwnerStatus(data.owner_v1);
   renderSchedule(data); renderAlerts(data); renderProjects(data, now); renderJobs(data); renderProfiles(data); renderEvents(data);
+}
+function renderOwnerStatus(owner = {}) {
+  const validStates = ["FREE", "OWNED", "UNKNOWN"];
+  const configured = owner.configured === true;
+  const stale = configured && owner.stale === true;
+  const status = configured && !stale && validStates.includes(owner.state) ? owner.state : "UNKNOWN";
+  const stateLabel = { FREE: "FREE · 已确认空闲", OWNED: "OWNED · 项目持有", UNKNOWN: "UNKNOWN · 状态未知" }[status];
+  $("ownerV1Badge").textContent = configured ? status : "未配置 · UNKNOWN";
+  if (stale) $("ownerV1Badge").textContent = "证据过期 · UNKNOWN";
+  $("ownerV1Badge").className = `pill ${status === "OWNED" ? "green-pill" : status === "UNKNOWN" || !configured ? "amber-pill" : "muted-pill"}`;
+  $("ownerV1State").textContent = configured && owner.stale === true
+    ? "UNKNOWN · 证据过期"
+    : stateLabel;
+  const ownerProject = owner.owner_project
+    ? (ownerProjectName[owner.owner_project] || owner.owner_project)
+    : null;
+  $("ownerV1ProjectLabel").textContent = stale && ownerProject
+    ? "上次登记项目"
+    : status === "OWNED" && ownerProject
+      ? "当前登记 Owner"
+      : "登记项目";
+  $("ownerV1Project").textContent = stale && ownerProject
+    ? `${ownerProject}（上次登记，待核实）`
+    : status === "OWNED" && ownerProject
+      ? ownerProject
+      : "—";
+  $("ownerV1Observed").textContent = clock(owner.last_observed_at);
+  $("ownerV1Acquired").textContent = status === "OWNED" ? clock(owner.acquired_at) : "—";
+  const guidance = $("ownerGuidance");
+  guidance.className = `owner-guidance ${!configured ? "unconfigured" : status.toLowerCase()}`;
+  if (!configured) {
+    guidance.textContent = "未配置 Owner v1 数据库，当前无法确认 4080 是空闲还是被持有。Legacy Broker 的任务计数和准入开关不代表 Owner 状态。";
+  } else if (stale) {
+    guidance.textContent = "Owner 观察已过期，当前按 UNKNOWN 处理。上次项目登记仅供追溯；等待直接观察恢复后再启动新的 4080 重任务。";
+  } else if (status === "FREE") {
+    guidance.textContent = `Owner v1 最近确认 4080 无项目持有（${clock(owner.last_observed_at)}）。下方 NVML 数值是独立的整卡物理观测。`;
+  } else if (status === "OWNED") {
+    guidance.textContent = `Owner v1 登记由 ${ownerProject || "未知项目"} 持有 4080（${clock(owner.last_observed_at)}）。其他项目应等待释放；Legacy 准入按钮不会改变此状态。`;
+  } else {
+    guidance.textContent = "当前无法确认 4080 所有者。不要根据显存用量猜测项目；Owner 状态恢复为 FREE 前，不应开始新的重型任务。";
+  }
+  renderOwnerEvidence(owner);
+}
+function markOwnerSnapshotUnavailable() {
+  const owner = state.dashboard?.owner_v1 || {};
+  const ownerProject = owner.owner_project
+    ? (ownerProjectName[owner.owner_project] || owner.owner_project)
+    : null;
+  $("ownerV1Badge").textContent = "读取失败 · UNKNOWN";
+  $("ownerV1Badge").className = "pill amber-pill";
+  $("ownerV1State").textContent = "UNKNOWN · 无法刷新";
+  $("ownerV1ProjectLabel").textContent = "最近成功快照项目";
+  $("ownerV1Project").textContent = ownerProject ? `${ownerProject}（未确认仍持有）` : "—";
+  $("ownerV1Acquired").textContent = "—";
+  const guidance = $("ownerGuidance");
+  guidance.className = "owner-guidance unknown";
+  guidance.textContent = owner.last_observed_at
+    ? `刚才未能读取本机服务。上次成功观察为 ${clock(owner.last_observed_at)}；当前 Owner 状态未知，等待连接恢复后再确认。`
+    : "刚才未能读取本机服务，因此无法确认 Owner 状态。等待连接恢复后再启动新的重型任务。";
+  renderOwnerEvidence(owner);
+}
+function renderOwnerEvidence(owner = {}) {
+  const labels = { h3: "H3 直接观察", live: "Live 直接观察", manga: "Manga 直接观察", gpu: "GPU · NVML 直接遥测" };
+  const maxAge = Number(owner.evidence_max_age_seconds);
+  const freshnessWindow = Number.isFinite(maxAge) && maxAge > 0 ? maxAge : 10;
+  for (const [source, label] of Object.entries(labels)) {
+    const row = document.querySelector(`[data-owner-evidence="${source}"]`);
+    if (!row) continue;
+    const evidence = owner.configured === true ? owner.evidence_sources?.[source] : null;
+    const timestamp = evidence?.observed_at;
+    const hasTimestamp = typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0;
+    const ageSeconds = hasTimestamp ? Date.now() / 1000 - timestamp : null;
+    const fresh = evidence?.fresh === true && evidence?.state === "FRESH"
+      && ageSeconds !== null && ageSeconds >= 0 && ageSeconds <= freshnessWindow;
+    const status = row.querySelector(".evidence-state");
+    const time = row.querySelector(".evidence-time");
+    row.querySelector("span").textContent = label;
+    status.className = `evidence-state ${fresh ? "fresh" : "unknown"}`;
+    status.textContent = fresh
+      ? "证据新鲜"
+      : evidence?.reason === "EXPIRED" || (ageSeconds !== null && ageSeconds > freshnessWindow)
+        ? "UNKNOWN · 已过期"
+        : evidence?.reason === "INVALID_TIMESTAMP" || (ageSeconds !== null && ageSeconds < 0)
+          ? "UNKNOWN · 时间异常"
+          : "UNKNOWN · 缺少证据";
+    time.textContent = hasTimestamp
+      ? `${clock(timestamp)}${ageSeconds >= 0 ? ` · ${Math.floor(ageSeconds)} 秒前` : ""}`
+      : "尚无有效时间戳";
+  }
 }
 function brokerRegisteredOwners(data) {
   const owners = new Map();
@@ -108,8 +208,8 @@ function gpuCard(prefix, gpu, data, managed) {
     const owners = brokerRegisteredOwners(data);
     $("managedReserve").textContent = `安全余量 ${mib(reserve)}`;
     $("managedDriver").textContent = gpu?.driver || "—";
-    $("managedAdmission").textContent = data.allocation_enabled ? "规则控制" : "暂停";
-    $("managedOwner").textContent = owners.length ? owners.join("；") : "无活动登记 · 实际 Owner 未知";
+    $("managedAdmission").textContent = data.allocation_enabled ? "Legacy 旧准入开启" : "Legacy 旧准入暂停";
+    $("managedOwner").textContent = owners.length ? owners.join("；") : "无旧许可登记 · Owner 未知";
     const fresh = !!(data.snapshot?.ok && gpu && Date.now() / 1000 - data.snapshot.timestamp <= 10);
     $("managedObserved").textContent = fresh ? `${mib(gpu.used_mib)} 显存 · ${pct(gpu.utilization_pct)} 利用率` : "遥测缺失或过期";
   }
@@ -191,6 +291,10 @@ $("jobFilter").addEventListener("change", () => state.dashboard && renderJobs(st
 $("allocationButton").addEventListener("click", async () => {
   if (!state.dashboard) return;
   const enabled = !state.dashboard.allocation_enabled;
+  if (enabled && state.dashboard.owner_v1?.configured === true) {
+    toast("Owner v1 已建立；旧准入不能从此页面重新启用", true);
+    return;
+  }
   if (enabled && !window.confirm("启用后，已接入项目可获得 GPU 许可。请先确认未纳管的 GPU 调用已停止，资源画像和模型释放已验证。继续启用？")) return;
   try {
     await mutate("/v1/admin/allocation", { enabled });

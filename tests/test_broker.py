@@ -686,6 +686,63 @@ def test_api_auth_and_static(settings):
             headers={"Authorization": "Bearer admin-test-token", "Origin": "http://evil.test"}).status_code == 403
 
 
+def test_dashboard_owner_projection_is_admin_only_and_hides_internal_identities(settings, monkeypatch):
+    app = create_app(settings, FakeMonitor())
+    monkeypatch.setattr(app.state.broker, "dashboard", lambda: {
+        "sessions": [{"owner_instance": "private-session-instance", "status": "READY"}],
+        "permits": [{"owner_instance": "private-permit-instance", "status": "ACTIVE"}],
+    })
+
+    with TestClient(app) as client:
+        assert client.get("/v1/dashboard").status_code == 401
+        absent = client.get(
+            "/v1/dashboard", headers={"Authorization": "Bearer admin-test-token"}
+        )
+        assert absent.json()["owner_v1"]["configured"] is False
+        assert absent.json()["owner_v1"]["state"] == "UNKNOWN"
+        owner_database = settings.data_dir / "owner.sqlite3"
+        assert not owner_database.exists()
+        with sqlite3.connect(owner_database) as connection:
+            connection.execute(
+                "CREATE TABLE owner_state ("
+                "gpu_uuid TEXT PRIMARY KEY, state TEXT NOT NULL, owner_project TEXT, "
+                "owner_instance TEXT, acquired_at REAL, last_observed_at REAL)"
+            )
+            connection.execute(
+                "CREATE TABLE owner_evidence_versions ("
+                "gpu_uuid TEXT NOT NULL, source TEXT NOT NULL, observed_at REAL NOT NULL, "
+                "PRIMARY KEY (gpu_uuid, source))"
+            )
+            observed_at = time.time()
+            connection.execute(
+                "INSERT INTO owner_state VALUES (?, 'OWNED', 'live', ?, ?, ?)",
+                (GPU, "private-owner-instance", observed_at - 2, observed_at),
+            )
+            connection.executemany(
+                "INSERT INTO owner_evidence_versions VALUES (?, ?, ?)",
+                [(GPU, source, observed_at) for source in ("h3", "live", "manga", "gpu")],
+            )
+        response = client.get(
+            "/v1/dashboard", headers={"Authorization": "Bearer admin-test-token"}
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["owner_v1"]["configured"] is True
+    assert payload["owner_v1"]["state"] == "OWNED"
+    assert payload["owner_v1"]["stale"] is False
+    assert payload["owner_v1"]["owner_project"] == "live"
+    assert all(
+        payload["owner_v1"]["evidence_sources"][source]["fresh"] is True
+        for source in ("h3", "live", "manga", "gpu")
+    )
+    assert "owner_instance" not in response.text
+    assert "private-session-instance" not in response.text
+    assert "private-permit-instance" not in response.text
+    assert "admin-test-token" not in response.text
+    assert "mini-test-token" not in response.text
+
+
 def test_configured_public_origin_accepts_admin_write(settings):
     app = create_app(replace(settings, public_origin="https://gpu.example.org"), FakeMonitor())
     with TestClient(app) as client:
@@ -693,6 +750,18 @@ def test_configured_public_origin_accepts_admin_write(settings):
         assert client.post("/v1/admin/allocation", json={"enabled": True}, headers=headers).status_code == 200
         assert client.post("/v1/admin/allocation", json={"enabled": False},
             headers={**headers, "Origin": "https://other.example.org"}).status_code == 403
+
+
+def test_legacy_allocation_cannot_be_reenabled_with_owner_config(settings):
+    (settings.data_dir / "owner.json").write_text("{}", encoding="utf-8")
+    app = create_app(settings, FakeMonitor())
+    with TestClient(app) as client:
+        headers = {"Authorization": "Bearer admin-test-token"}
+        denied = client.post("/v1/admin/allocation", json={"enabled": True}, headers=headers)
+        assert denied.status_code == 409
+        assert client.post(
+            "/v1/admin/allocation", json={"enabled": False}, headers=headers
+        ).status_code == 200
 
 
 def test_admin_can_create_profile_that_checks_live_vram(settings):

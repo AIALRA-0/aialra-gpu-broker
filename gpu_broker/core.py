@@ -335,6 +335,10 @@ class Broker:
 
     def set_allocation(self, enabled: bool) -> dict:
         with self.transaction():
+            if enabled and (self.settings.data_dir / "owner.json").is_file():
+                raise BrokerError(
+                    409, "Legacy allocation cannot be enabled while Owner is configured"
+                )
             self.conn.execute(
                 "UPDATE meta SET value=? WHERE key='allocation_enabled'", ("1" if enabled else "0",)
             )

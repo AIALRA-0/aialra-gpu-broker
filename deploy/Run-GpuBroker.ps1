@@ -155,11 +155,13 @@ while ($true) {
             throw "Missing isolated Python runtime: $pythonExe"
         }
         Set-Location -LiteralPath $RepoRoot
-        # Windows PowerShell 5 wraps a native program's stderr as an ErrorRecord.
-        # Uvicorn writes normal lifecycle messages there, so the native exit code
-        # is recorded and the supervisor retries instead of treating stderr as fatal.
+        # Windows PowerShell 5 wraps native stderr as ErrorRecord. Redirection
+        # directly into the log mixes UTF-16 records with UTF-8 supervisor lines,
+        # obscuring tracebacks when the upstream disappears. Convert each record
+        # to text before writing it with one encoding.
         $ErrorActionPreference = 'Continue'
-        & $pythonExe -m gpu_broker serve --data-dir $DataDir --port $Port *>> $logPath
+        & $pythonExe -m gpu_broker serve --data-dir $DataDir --port $Port 2>&1 |
+            ForEach-Object { [string]$_ | Out-File -FilePath $logPath -Append -Encoding utf8 }
         $result = $LASTEXITCODE
         $ErrorActionPreference = 'Stop'
         Write-ServiceLog "$(Get-Date -Format o) Broker exited with code $result; retrying in $RetrySeconds seconds"

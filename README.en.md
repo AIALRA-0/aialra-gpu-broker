@@ -1,11 +1,16 @@
 <div align="center">
-<h1>AIALRA GPU Broker</h1>
-<p>Observe GPU usage and coordinate admission to one compute GPU across multiple projects on a Windows host</p>
+<h1>AIALRA GPU Coordinator</h1>
+<p>Observe a Windows compute GPU and introduce cross-project ownership coordination</p>
+<p><a href="README.md">简体中文</a> · <a href="API.md">API</a> · <a href="INTEGRATION_PROMPTS.md">Integration prompts</a> · <a href="DEPLOYMENT.md">Deployment</a></p>
 </div>
 
-[简体中文](README.md) · [API](API.md) · [Integration prompts](INTEGRATION_PROMPTS.md) · [Deployment](DEPLOYMENT.md)
+The currently deployed broker records jobs, resource profiles, permits, realtime sessions, and recovery decisions. Its local dashboard shows GPU telemetry, queue reasons, project heartbeats, job states, and events.
 
-The broker records jobs, resource profiles, permits, realtime sessions, and recovery decisions. Its local dashboard shows GPU telemetry, queue reasons, project heartbeats, job states, and events.
+The next version is being reduced to a **4080 ownership coordinator**. Its independent Owner v1 records only `FREE / OWNED / UNKNOWN` and coordinates H3, Live, and Manga through `acquire / release / observe`. Each project keeps its own queue and model calls. A coordinator outage cannot cancel submitted compute; uncertain ownership blocks new GPU work. The public dashboard is observational and outside the local admission path. See the [Owner v1 design](docs/OWNER_V1_DESIGN_2026-09-23.md) and [signed local API contract](docs/OWNER_API_CONTRACT.md).
+
+Owner v1 is under implementation and offline testing. **It is not the production gate for the three projects yet.** The startup and permit instructions below describe the existing broker, not an Owner v1 cutover.
+
+The separate [Owner Windows service installer](deploy/Install-OwnerWinSWService.ps1) registers a manually started service by default. Start and cut over only after all three GPU entry gates, model release paths, and a measured idle threshold pass real-task acceptance; see the [deployment gates](DEPLOYMENT.md#owner-v1-部署门槛).
 
 The broker currently reserves project identities and API routes for `minimax`, `live_translate`, and `manga`. Their client integrations and real-task acceptance are still in progress; a dashboard heartbeat does not prove that GPU calls are gated. Other projects need corresponding configuration and API validation changes. Device identifiers, credentials, job data, and private server configuration are not part of this repository.
 

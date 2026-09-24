@@ -1,5 +1,7 @@
 # GPU Broker 接入协议 v1
 
+> 本页是当前旧 Broker 接口记录，不能作为新项目的 Owner v1 接入指令。独立 Owner 的本机签名接口见 [Owner API 合同](docs/OWNER_API_CONTRACT.md)；三项目尚未完成生产切换
+
 同机地址：`http://127.0.0.1:18765`；跨主机 HTTPS 地址由部署者配置，当前实例为 `https://gpu.aialra.online`。请求头：`Authorization: Bearer <项目专用令牌>`；写入 JSON 时加 `Content-Type: application/json`。三个项目编号为 `minimax`、`live_translate`、`manga`。管理员令牌只用于监控和管理，项目进程不得持有。
 
 项目令牌保存在部署者指定的数据目录 `tokens.json` 的 `projects` 下，只能由后端安全配置读取，不能放进网页。接口出现 401、403、409、5xx、超时或网络错误时，适配器必须停止启动新的 GPU 阶段，并在原业务系统保留任务和后端编号；不得按“Broker 不可用就直连 GPU”降级。

@@ -5,6 +5,14 @@ __pycache__/
 artifacts/
 *.egg-info/
 .local-data/
+.env
+.env.*
+!.env.example
+owner.json
+tokens.json
+*.token
+owner.sqlite3*
+broker.sqlite3*
 deploy/private/
 source/
 GPU_BROKER_DEPLOYMENT_REVIEW_2026-09-16.md

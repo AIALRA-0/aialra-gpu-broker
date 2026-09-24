@@ -17,6 +17,7 @@ from . import __version__
 from .config import Settings
 from .core import Broker, BrokerError
 from .monitor import Monitor, NvidiaMonitor
+from .owner_status import read_owner_status
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +211,16 @@ def create_app(settings: Settings, monitor: Monitor | None = None) -> FastAPI:
 
     @app.get("/v1/dashboard")
     def dashboard(_: str = Depends(admin)):
-        return broker.dashboard()
+        payload = broker.dashboard()
+        # The legacy page does not use these internal identities, and they are
+        # not part of the public dashboard projection.
+        for name in ("sessions", "permits"):
+            for record in payload.get(name, []):
+                record.pop("owner_instance", None)
+        payload["owner_v1"] = read_owner_status(
+            settings.data_dir / "owner.sqlite3", settings.managed_gpu_uuid
+        )
+        return payload
 
     @app.get("/v1/history")
     def history(

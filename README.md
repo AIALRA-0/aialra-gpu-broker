@@ -1,11 +1,22 @@
 <div align="center">
-<h1>AIALRA GPU Broker</h1>
-<p>在一台 Windows 主机上观察显卡用量，并让多个项目按许可使用同一块计算 GPU</p>
+<h1>AIALRA GPU Coordinator</h1>
+<p>在一台 Windows 主机上观察计算显卡，并逐步接入跨项目所有权协调</p>
+<p><a href="README.en.md">English</a> · <a href="API.md">接口协议</a> · <a href="INTEGRATION_PROMPTS.md">项目接入提示词</a> · <a href="DEPLOYMENT.md">部署说明</a></p>
 </div>
 
-[English](README.en.md) · [接口协议](API.md) · [项目接入提示词](INTEGRATION_PROMPTS.md) · [部署说明](DEPLOYMENT.md)
+当前已部署版本仍是旧 GPU Broker，负责原有任务准入与用量监控；控制台展示显卡和项目的运行状况
 
-GPU Broker 为任务登记、资源画像、排队许可、实时会话和故障核实提供一个本地入口，控制台显示显卡遥测、等待原因、项目心跳、任务状态和事件记录
+下一版正在收敛为 **4080 所有权协调器**
+独立 Owner v1 只记录 `FREE / OWNED / UNKNOWN`，用 `acquire / release / observe` 协调 H3、Live、Manga；三项目继续用自己的队列和模型调用
+已提交的计算不会因为协调器失联被取消；状态不明时新的 GPU 工作等待
+公网控制台只用于观察，不进入本机 GPU 准入路径
+设计见 [Owner v1](docs/OWNER_V1_DESIGN_2026-09-23.md)，本机双向签名接口见 [Owner API 合同](docs/OWNER_API_CONTRACT.md)
+
+Owner v1 的代码与离线测试正在实施，**尚未启用三项目生产门禁**
+下文的启动与许可说明描述当前旧 Broker，不应当作 Owner v1 的生产切换步骤
+
+Owner 的独立 Windows 服务安装脚本位于 [Install-OwnerWinSWService.ps1](deploy/Install-OwnerWinSWService.ps1)，默认只登记手动启动服务
+三项目 GPU 入口、模型释放和全空闲阈值完成真实验收后，才按 [部署门槛](DEPLOYMENT.md#owner-v1-部署门槛)启动并切换
 
 Broker 目前预留了 `minimax`、`live_translate`、`manga` 三个项目身份和接口；项目侧接入及真实任务联合验收仍在进行，控制台心跳不能证明 GPU 调用已受控；其他项目需要扩展配置与接口校验；公开仓库不包含设备编号、访问令牌、任务数据和服务器配置
 

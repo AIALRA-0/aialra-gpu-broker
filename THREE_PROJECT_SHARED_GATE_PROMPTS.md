@@ -1,5 +1,7 @@
 # 三项目接入同一 GPU 门禁的提示词
 
+> 此文件记录此前“逐阶段共享 Broker 许可”方案，当前暂停执行。用户已把首版目标改为 4080 单项目所有权与安全交接；新设计以 `docs/OWNER_V1_DESIGN_2026-09-23.md` 为准，`THREE_PROJECT_OWNER_HANDOFF_PROMPTS.md` 仍是待设计核对的草案，暂勿转发执行。在迁移方案通过真实业务验收前，不得删除仍在运行的旧保护
+
 ## 当前状态与目标工作模式
 
 目标状态是由同一个 GPU Broker 展示和管理三项目的受管 GPU 准入；项目后端在每个受管 GPU 阶段前登记任务并申请许可，只有许可为 `ACTIVE` 才能调用原模型服务
@@ -16,6 +18,8 @@
 
 先列出并核对全部实际 GPU 入口，包括启动预热、自动加载、任务恢复、重试、直接 API 调用和后台线程。保留原业务数据库、结果写入、取消逻辑和模型服务；Broker 负责跨项目准入、等待队列、许可与审计，不代替项目后端执行推理
 
+不能只在项目后端检查许可；每个可直接接收本机 GPU 请求的模型服务也必须在实际推理前核对同一张许可的 ACTIVE 状态、项目、owner、stage、profile 与后端任务编号。缺失证明、字段不符、Broker 超时或不可达时拒绝推理；健康检查和已获准任务的安全释放仍应可用。用结构合法的无许可直连请求证明模型调用计数为零，再用真实许可证明不会误拦截
+
 使用本项目专用令牌，绝不让浏览器拿令牌，也不让项目进程读取含管理员令牌的共享凭据文件。令牌文件格式按本项目启动器要求配置，不把管理员令牌复制进项目凭据。每个业务任务使用稳定的 external_id 和 idempotency_key，每个 GPU 阶段使用稳定的 request_key，持久保存 Broker job/permit ID 及原模型后端编号。等待许可时保留业务任务并继续项目心跳；许可活跃时定期续期；超时、401/403/409/5xx、断线和未知后端状态一律停止新 GPU 阶段，不得直连模型作为回退
 
 模型明确停止后才能 finish permit。取消或请求超时后如果无法证明后端已停止，应保留 UNCERTAIN 并走核实流程，不能仅凭显存降低释放。Broker job 的终态应在原业务结果提交确认后上报，避免结果写回失败时破坏重试。共享准入开关正式打开前，提供可重复的测试：WAITING 和 Broker 故障时模型调用次数为零；ACTIVE 后真实任务完成；取消、重启和失联恢复不会重复发布结果
@@ -28,13 +32,15 @@
 ```text
 当前 H3 后端仍经独立的本机 Broker 获取 batch_task 会话和阶段许可，再向原有 ComfyUI 服务提交。迁移时只能将 H3 指向共享 Broker，不能让同一 H3 阶段同时向新旧 Broker 申请许可；保留现有提交保护、任务编号、取消和恢复逻辑
 
-先运行 `scripts/Prepare-SharedGpuBroker.ps1` 做默认只读预检，确认 H3 业务任务、阶段、旧新 Broker 的许可与会话均无活动项，模型服务队列为空。该脚本的 `-CreateProfiles` 会按脚本内固定显存和时长值创建画像；这些值不是资源实测结果，不能直接作为已验证的生产画像。先完成每种模型路径的实际增长测量，再创建画像并核对其 ID 映射
+先运行 `scripts/Prepare-SharedGpuBroker.ps1` 做默认只读预检，确认 H3 业务任务、阶段、旧新 Broker 的许可与会话均无活动项，模型服务队列为空。逐一实测每种实际启用的模型路径，再创建有测量依据的独立画像。历史视频测试表明，实际显存增长加上默认安全余量可能超过计算卡容量，不能为了通过 `respect_vram=true` 检查而虚报较小峰值。若将视频阶段置于 `batch_task` 独占会话并设 `respect_vram=false`，必须先完成共享 Broker 的运行时空闲显存检查及独占余量验证，确保 Live、Manga 不再有绕过共享 Broker 的启动入口；这仍不能阻止外部程序在许可发放后占用显存。准备脚本当时硬要求五种 `respect_vram=true` 画像，须按已验证能力修改并测试，不能把视频画像复制给图像、音频、镜头和放大。旧的固定估算画像不得继续用于生产放行
 
 共享准备脚本生成的 H3 专用令牌文件只包含 `projects.minimax` 项目令牌，不包含 `admin` 字段；该 JSON 文件供 `Start-Studio.ps1` 的 `-BrokerTokenFile` 参数读取。若绕过启动脚本直接设置后端 `BROKER_TOKEN_FILE`，该环境变量要求文件内容是纯项目令牌文本，不能把两种格式混用
 
-在 H3 停止且预检再次通过后，才用 `-H3Quiesced -StampLegacyOrigins` 标记旧阶段的 Broker 来源；该脚本不会代为停止服务。随后将 `-BrokerBaseUrl`、`-BrokerTokenFile`、`-BrokerProfileFile` 写入 H3 supervisor 计划任务的 Action Arguments，并确认自动恢复仍传入这些值。supervisor 不接受 `-BrokerMode` 参数，当前 `Start-Studio.ps1` 默认以 `enforce` 模式启动；核对该默认值后先用隔离 Broker 验证后端逻辑。共享全局开关关闭时不可能取得 `ACTIVE`。生产切换须在 H3 停止期间完成新配置核对，并先停用旧 Broker 计划任务；确认三项目所有未受共享许可保护的 GPU 调用均已停止或完成接入后，才在维护窗口短暂开启全局准入并逐项做真实验证。任一项目失败即暂停全局准入，并保留未知任务和许可供核实；保留旧数据库及备份供核对和回退。旧 Broker 的会话与许可 ID 不能拿到新 Broker 查询
+在 H3 停止且预检再次通过后，才用 `-H3Quiesced -StampLegacyOrigins` 标记旧阶段的 Broker 来源；该脚本不会代为停止服务。随后将 `-BrokerBaseUrl`、`-BrokerTokenFile`、`-BrokerProfileFile` 写入 H3 supervisor 计划任务的 Action Arguments，并确认自动恢复仍传入这些值。此段记录旧共享 Broker 迁移设想，不适用于现行 Owner 切换；当前 supervisor 已有 `-BrokerMode owner` 参数。共享全局开关关闭时不可能取得旧 `ACTIVE`。生产切换须在 H3 停止期间完成新配置核对，并先停用旧 Broker 计划任务；确认三项目所有未受共享许可保护的 GPU 调用均已停止或完成接入后，才在维护窗口短暂开启全局准入并逐项做真实验证。任一项目失败即暂停全局准入，并保留未知任务和许可供核实；保留旧数据库及备份供核对和回退。旧 Broker 的会话与许可 ID 不能拿到新 Broker 查询
 
-依次验证图像、视频、音频、镜头和放大实际启用的 ComfyUI 入口。至少完成一个真实网站图像任务，并测试许可 WAITING 时 ComfyUI 提交次数为零。任务结束后检查队列、许可与缓存显存；仅在后端确认空闲时释放缓存，再验证下一项目能获得许可。未实测的入口明确标为未覆盖
+依次验证图像、视频、音频、镜头和放大实际启用的 ComfyUI 入口。至少完成一个真实网站图像任务，并测试许可 WAITING 时 ComfyUI 提交次数为零。H3 长视频的已核销基础设施故障可持续退避重试，等待时间有上限；确定性失败、活动或未对账的旧阶段不得重提。同一业务任务每次物理尝试必须有独立编号，结果只能发布一次；界面显示当前尝试、等待原因和下一次重试时间，不能保留误导性的固定重试次数上限或“已耗尽”提示。任务结束后检查队列、许可与缓存显存；仅在后端确认空闲时释放缓存，再验证下一项目能获得许可。未实测的入口明确标为未覆盖
+
+运行中的 ComfyUI 必须安装并加载与仓库 SHA-256 一致的 `aialra_gpu_gate` 扩展；`/prompt` 要验证后端口令以及与 prompt UUID 绑定的 ACTIVE 许可。释放模型后要取得 Comfy worker 对该次 release ID 的完成回执及零已加载模型证明；不能仅凭 `/free` 返回 200 或显存读数下降结束许可。迁移前先通过后端历史和队列把旧私有 Broker 中的 UNCERTAIN 阶段按正式 API 核销，不得直接改 SQLite
 ```
 
 ## 发给 Live 的专用提示词
@@ -42,9 +48,11 @@
 ```text
 保持音频采集、先落盘、确认回执和 Core 租约队列独立运行。GPU Agent 拿到持久化模型任务后，先向共享 Broker 申请该任务的许可，拿到 `ACTIVE` 才向本机模型 Worker 发推理请求。不要在录音 WebSocket 或每个音频数据包的保存链路同步访问 Broker
 
-运行开关是 `AIALRA_GPU_BROKER_ENABLED`，默认关闭；目标 Broker 地址由 `AIALRA_GPU_BROKER_URL` 设置，四个模型通道分别需要 `AIALRA_GPU_BROKER_PROFILE_ASR`、`...PROFILE_TRANSLATE`、`...PROFILE_LLM`、`...PROFILE_VLM`。项目令牌由启动脚本从受保护的 DPAPI 凭据解密到 GPU Agent 进程；只配置 Live 项目令牌，不给浏览器或 Core 录音服务。启用前停止无许可的 GPU 预热、探针和自动加载，健康检查必须允许冷模型
+运行开关是 `AIALRA_GPU_BROKER_ENABLED`，默认关闭；目标 Broker 地址由 `AIALRA_GPU_BROKER_URL` 设置，四个模型通道分别需要 `AIALRA_GPU_BROKER_PROFILE_ASR`、`...PROFILE_TRANSLATE`、`...PROFILE_LLM`、`...PROFILE_VLM`。项目令牌由启动脚本从受保护的 DPAPI 凭据解密，只传给本机 GPU Agent 和模型 Worker；前者申请许可，后者复核许可，不给浏览器或 Core 录音服务。启用前停止无许可的 GPU 预热、探针和自动加载，健康检查必须允许冷模型
 
 启用时启动脚本要求单独的 Ollama 模型目录和实例，核对所需模型文件，并通过临时模型清单哨兵验证实例确实读取该目录；不能把系统共享实例中的同名模型当作 Live 独有并随意卸载。四种资源画像必须按实测建立。Broker job 终态只有在 Core 写回确认后上报；断线、超时或模型结果不明时保留可核对的任务状态，不能让后续模型请求绕过许可
+
+本机 Worker 的各个模型 POST 路由也要独立验证许可，Agent 发来的证明需绑定实际路由、Broker job、request key、owner、stage 和 profile；Worker 访问 Broker 再次确认 ACTIVE，拒绝无证明直连。模型释放接口要核对相同绑定并允许已请求取消的许可安全清理，但任何推理请求仍只接受 ACTIVE。许可结束前先卸载本项目 ASR、翻译和独立 Ollama 模型并复查驻留状态。监护进程在推理忙时不得把依赖 Ollama 的健康检查超时当作 Worker 死亡；使用不依赖外部模型服务的本地存活探针，并单独处理确已超过推理期限的任务。专用 Ollama 原生端口仍是受信任本机进程边界，不能宣称能够阻止任意本机程序直连
 
 共享 Broker 当前全局同一时刻只发一张 ACTIVE 许可，可能把原本并行的识别与翻译阶段串行化。正式启用前测量短句与连续录音的端到端延迟、积压、重连、无音频丢失及无重复译文，并与原路径比较。若实时响应不达标，先提出同项目并发或整段会话保护的可验证设计，不要隐瞒性能退化或直接上线
 ```
@@ -58,12 +66,14 @@
 
 默认开关 `PANELTONE_GPU_BROKER_MODE=off` 会完全绕过门禁，必须显式设为 `enforce` 才会申请许可。Broker 地址、项目令牌和画像 ID 分别通过 `PANELTONE_GPU_BROKER_URL`、`PANELTONE_GPU_BROKER_TOKEN` 或 `PANELTONE_GPU_BROKER_TOKEN_FILE`、`PANELTONE_GPU_BROKER_PROFILE_SEMANTIC` 与 `PANELTONE_GPU_BROKER_PROFILE_INFERENCE` 配置；令牌文件须为纯项目令牌文本，不得放共享管理员凭据 JSON
 
-管理员按实测创建 `semantic_mask` 与 `panel_inference` 两个批处理画像，后者的显存增长要覆盖实际启用的 GPU 图像引擎。先用假或隔离 Broker 验证 `WAITING`、`ACTIVE`、断线、取消和重复请求；再在所有未受许可保护的 GPU 调用停止或已纳管的维护窗口中，开启共享全局准入完成低负载真实任务和可读取的整页结果验证。现有 FLUX 推理曾返回图像但画质校验未通过，不可把 HTTP 成功写成整页验收通过
+计划任务安装参数必须把 enforce 模式、回环 Broker 地址、Manga 专用令牌文件和两个画像 ID 传给监护进程；监护进程再传给工作台、语义服务和 FLUX 服务。三处健康接口要回报实际 enforce 模式，单独的准入就绪检查要说明 Broker 是否可达；缺配置时启动失败。对语义和 FLUX 的合法无许可 HTTP 请求均应返回拒绝，且 `inference_requests_total` 不增加；Broker 不可达时拒绝推理，但健康和安全释放仍可用。Cobra 候选服务的上游 CUDA 模型仍有全局引用，现有释放回执不能证明显存已清空；enforce 模式必须不启动 Cobra，并由 API 和任务执行路径拒绝 Cobra 引擎，直到有真实卸载证明
+
+管理员按实测创建 `semantic_mask` 与 `panel_inference` 两个批处理画像，后者以实际启用的 FLUX 路径测量。先用假或隔离 Broker 验证 `WAITING`、`ACTIVE`、断线、取消和重复请求；语义导入在准入前遇到短暂 Broker 故障时保留可恢复的等待检查点，界面提供明确的“开始或继续”动作，不能记成终态模型失败。再在所有未受许可保护的 GPU 调用停止或已纳管的维护窗口中，开启共享全局准入完成低负载真实任务和可读取的整页结果验证。现有 FLUX 推理曾返回图像但画质校验未通过，不可把 HTTP 成功写成整页验收通过
 ```
 
 ## 联合上线门槛
 
-1. 三项目全部 GPU 入口清单与启动预热路径经过代码检查；项目进程只持自己的令牌
+1. 三项目全部 GPU 入口清单与启动预热路径经过代码检查；项目进程只持自己的令牌；运行中的模型服务对直连请求独立复核同一许可
 2. 等待、暂停、失联、取消和资源不足时，通过假模型计数确认实际推理请求为零
 3. 全局开关保持关闭时先完成隔离测试、备份、实测画像创建、各项目凭据准备和代码路径核对；按 H3 的受控迁移脚本标记旧阶段来源，并确保监护任务保留新配置
 4. 生产真实任务需要 `allocation_enabled=true` 才能得到 `ACTIVE`；这项全局开关对所有项目生效；只在维护窗口确认三项目旧模型路径都已停用或已接入共享许可后，才短暂打开全局开关并逐项目做真实验证
