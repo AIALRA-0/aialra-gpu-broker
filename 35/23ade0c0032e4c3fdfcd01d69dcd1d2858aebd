@@ -1,0 +1,241 @@
+docs/OWNER_API_CONTRACT.md
+  s_d8a6c2c7869d89::t_72ec9ac4eae88d 1-8,10-39
+  s_d8a6c2c7869d89::t_9ebc57a387e14c 9
+gpu_broker/api.py
+  s_d8a6c2c7869d89::t_69a73d77f694fb 20,214-223
+docs/OWNER_OBSERVER_CONTRACT.md
+  s_d8a6c2c7869d89::t_a2f08168e8973a 36-37
+  s_d8a6c2c7869d89::t_7c164f64355ed5 1-35
+API.md
+  s_e8850ef125fb32::t_baa40b19522641 3-4
+INTEGRATION_PROMPTS.md
+  s_d8a6c2c7869d89::t_f3f9c5a70b0609 3,5-7
+deploy/Install-OwnerWinSWService.ps1
+  s_d8a6c2c7869d89::t_6118f300d7484f 45-47
+  s_d8a6c2c7869d89::t_d8d1d3fd107d8f 1-36,41-44,48-96
+  s_d8a6c2c7869d89::t_b355b377edd03f 37-40
+tests/test_owner_api.py
+  s_d8a6c2c7869d89::t_84c5e7ea190f4d 1-2,4-5,7-9,11-62,112-225,243-287,292-340
+  s_d8a6c2c7869d89::t_0fdcb7abfeb6a1 288-291
+  s_d8a6c2c7869d89::t_11bae5bcc275ac 3,6,10,63-111
+  s_d8a6c2c7869d89::t_a9f27551887447 226-242
+gpu_broker/static/app.js
+  s_d8a6c2c7869d89::t_1d2c80254cb65d 51,133-150
+  s_d8a6c2c7869d89::t_15058d68fd8835 96-97,100,108,113-116,124
+  s_d8a6c2c7869d89::t_d4739c27f7aca6 71-72,151-181
+  s_d8a6c2c7869d89::t_47c0d86ff148a8 90,93-95,99,101,106,118-119
+  s_d8a6c2c7869d89::t_8780e18f07b116 109-112,120-123,125-132,211-212
+  s_d8a6c2c7869d89::t_562e9a4bb65239 12,105,107
+  s_d8a6c2c7869d89::t_1372e88770faa7 78-87,294-297
+  s_d8a6c2c7869d89::t_43e9d3157a0aad 102-104
+  s_d8a6c2c7869d89::t_4a95a6252e28e7 98
+  s_d8a6c2c7869d89::t_b23e86296974a0 117
+gpu_broker/owner_auth.py
+  s_d8a6c2c7869d89::t_c74e20901167ab 1-72
+gpu_broker/owner_status.py
+  s_d8a6c2c7869d89::t_af69816cc5918e 15,35-36,45-48,54-63,67-76,80,86,102-134
+  s_d8a6c2c7869d89::t_69a73d77f694fb 1-6,8-11,13-14,16-20,25-30,32-34,37-44,49-53,64-66,81-83,91,94-101
+  s_d8a6c2c7869d89::t_99216a8c9f53ff 21-24
+  s_d8a6c2c7869d89::t_d7756ae05f9150 77-79
+  s_d8a6c2c7869d89::t_562e9a4bb65239 90,92-93
+  s_d8a6c2c7869d89::t_43e9d3157a0aad 7,12,31,84-85,87-89
+uv.lock
+  s_d8a6c2c7869d89::t_606495beea8617 1-362
+gpu_broker/static/index.html
+  s_d8a6c2c7869d89::t_e4d3cc7955b051 34
+  s_d8a6c2c7869d89::t_bc797881be6743 33
+  s_d8a6c2c7869d89::t_0335e20c24e6af 30-32,35,39-40
+  s_d8a6c2c7869d89::t_4f5e19ce36901f 53
+THREE_PROJECT_OWNER_HANDOFF_PROMPTS.md
+  s_d8a6c2c7869d89::t_d9a4a9a8335d74 44
+  s_d8a6c2c7869d89::t_393d298d9cda27 36,46,54
+  s_d8a6c2c7869d89::t_0281c7e86f458e 1-2,5-8,10-15,17-21,25-31,33,35,37-41,43,45,47-51,53,55-57
+  s_d8a6c2c7869d89::t_bb1c42aed2f4fe 3,23-24
+  s_d8a6c2c7869d89::t_9c4cfb610ee19b 4
+  s_d8a6c2c7869d89::t_5ec46304099c28 9,16,22,32,34,42,52
+.gitignore
+  s_d8a6c2c7869d89::t_d1490cc5b6c8d9 11-15
+  s_d8a6c2c7869d89::t_7abb0fdda50913 8-10
+deploy/Run-GpuBroker.ps1
+  s_d8a6c2c7869d89::t_87828c8bd3420a 158-161,163-164
+DEPLOYMENT.md
+  s_d8a6c2c7869d89::t_2fca71cc73a84b 69
+  s_d8a6c2c7869d89::t_068daa91e66496 7-8,10-12
+  s_d8a6c2c7869d89::t_ff00df575dd186 9
+  s_d8a6c2c7869d89::t_905db527019a09 13-17,29
+  s_d8a6c2c7869d89::t_b008eb8554a9e7 5
+  s_d8a6c2c7869d89::t_0129352c82af9d 42,68,70
+gpu_broker/owner_api.py
+  s_d8a6c2c7869d89::t_b6161c3d78e5a4 162
+  s_d8a6c2c7869d89::t_c6d4f426087c36 28,103-113
+  s_d8a6c2c7869d89::t_398352a00d6f9a 9,163,173-176,188,200
+  s_d8a6c2c7869d89::t_ce0e8511be8a8c 1-8,10-27,29-102,114-161,164-172,177-187,189-199,201-203
+tests/test_broker.py
+  s_d8a6c2c7869d89::t_ed411566cf14e5 755-766
+  s_d8a6c2c7869d89::t_ab5071f60a0dfd 689-697,725-730,739-745
+  s_d8a6c2c7869d89::t_44d11045ec21f2 711-715,720-723,735-738
+  s_d8a6c2c7869d89::t_4a95a6252e28e7 698-710,717,724
+  s_d8a6c2c7869d89::t_43e9d3157a0aad 716,718-719,731-734
+docs/OWNER_V1_DESIGN_2026-09-23.md
+  s_d8a6c2c7869d89::t_b01b8c05003a9f 83
+  s_d8a6c2c7869d89::t_cd4b066ea12dce 98-101,126
+  s_d8a6c2c7869d89::t_ebc6161d0538c3 16,18
+  s_d8a6c2c7869d89::t_ab40e1f339ea5a 1-2,4,6-15,17,19-30,33,36-48,50,55-59,63,65-68,71-75,77,79-81,84-87,90-97,104-105,107-113,116-120,122-125,128-132,134,137-138
+  s_d8a6c2c7869d89::t_620de8036479f0 49
+  s_d8a6c2c7869d89::t_eb7e07503810c5 3,5,31-32
+  s_d8a6c2c7869d89::t_7601bbff49d550 114-115
+  s_d8a6c2c7869d89::t_f1a213fb130eb4 70
+  s_d8a6c2c7869d89::t_e842992791f63e 133,139
+  s_d8a6c2c7869d89::t_510d0dbdac401f 88-89
+  s_d8a6c2c7869d89::t_6b960613472dca 34-35
+  s_d8a6c2c7869d89::t_c18d1c6b3226b2 53-54
+  s_d8a6c2c7869d89::t_2a111b0320e49c 121,127,135,141
+  s_d8a6c2c7869d89::t_94a4dfdb55473a 78
+  s_d8a6c2c7869d89::t_533c059f2f33b5 106
+  s_d8a6c2c7869d89::t_ec0b1538368df1 60
+  s_9f7652456e8616::t_d57c0f091b55f9 136,140
+  s_d8a6c2c7869d89::t_15b882b4aced14 51-52,62,64,69,76
+  s_d8a6c2c7869d89::t_ebe370f0929041 61,82
+  s_d8a6c2c7869d89::t_f77ebba19d6f96 102-103
+README.en.md
+  s_d8a6c2c7869d89::t_302065c81ccbf1 13
+  s_d8a6c2c7869d89::t_28f0e2624a43eb 4
+  s_d8a6c2c7869d89::t_46948f10b75522 12
+  s_d8a6c2c7869d89::t_bee9844b9897c2 7,9-11
+  s_d8a6c2c7869d89::t_4f5e19ce36901f 2-3
+docs/OWNER_ACCEPTANCE_MATRIX.md
+  s_d8a6c2c7869d89::t_1004bc0a0fc9e4 9
+  s_d8a6c2c7869d89::t_11f90ceda3abe2 10
+  s_d8a6c2c7869d89::t_da41fa290aadf2 1-7,14,16-19
+  s_d8a6c2c7869d89::t_79716588c863e6 11
+  s_d8a6c2c7869d89::t_3157c33eccda57 13
+  s_d8a6c2c7869d89::t_65cd3e6d7a15e4 15
+  s_d8a6c2c7869d89::t_230beb64a92ae4 8,12
+gpu_broker/owner_cli.py
+  s_d8a6c2c7869d89::t_850cd2797028e5 61-97
+  s_71db67cf8751ad::t_3e40cf77740072 102
+  s_d8a6c2c7869d89::t_921fdd6cc2b83d 7,24,116-129
+  s_d8a6c2c7869d89::t_644e604ef1f9bd 1-6,8-23,25-60,98-101,103-115,130-133
+THREE_PROJECT_SHARED_GATE_PROMPTS.md
+  s_d8a6c2c7869d89::t_34095adb559458 22,40,51
+  s_d8a6c2c7869d89::t_f3233f30c6ffd9 69-71
+  s_d8a6c2c7869d89::t_ebdc1dfacb699f 21,43,56,76
+  s_d8a6c2c7869d89::t_0281c7e86f458e 4
+  s_d8a6c2c7869d89::t_d4fdc9249b44bd 35,39
+  s_d8a6c2c7869d89::t_c92fc70fa1ac72 3
+  s_d8a6c2c7869d89::t_71916458bcdbdb 41,55
+gpu_broker/core.py
+  s_d8a6c2c7869d89::t_7b34d2dabfb6ae 338-341
+pyproject.toml
+  s_d8a6c2c7869d89::t_38939d9196d22d 23
+tests/test_owner_status.py
+  s_d8a6c2c7869d89::t_47c0d86ff148a8 1-9,11-12,27,29-34,36-38,41-50,52-59,61,66-80
+  s_d8a6c2c7869d89::t_c17f9758be465a 10,13-25,39-40,64-65,112,136-202
+  s_d8a6c2c7869d89::t_43e9d3157a0aad 26,28,35,51,60,62-63,81-82,84-96,101-102,104-109
+  s_d8a6c2c7869d89::t_4ba22ff07f58f9 258-263
+  s_d8a6c2c7869d89::t_99216a8c9f53ff 83,97-100,103,110-111
+  s_d8a6c2c7869d89::t_aecc0a7e4df35f 203-257,264-278
+  s_d8a6c2c7869d89::t_562e9a4bb65239 113-135
+gpu_broker/owner_runtime.py
+  s_d8a6c2c7869d89::t_887331a0ddb9b7 15,19,101-113
+  s_d8a6c2c7869d89::t_f30ce891310ebf 81
+  s_d8a6c2c7869d89::t_f05b0cd588fc23 1-10,12-14,16-18,20-80,82-100,114-158,170-217
+  s_d8a6c2c7869d89::t_6cd7ae490ba9cc 11,159-169
+tests/test_owner.py
+  s_d8a6c2c7869d89::t_8733cf59542351 1-20,27-52,54-61,63-69,73-78,80-83,85-126,130,134-143,146-149,152-193,195-201,204-246,360-373,376,378-396
+  s_d8a6c2c7869d89::t_b43d2081b9239c 416-423
+  s_d8a6c2c7869d89::t_5e445db6ef1e35 127-129,131-133,144-145,150-151,202-203,247-248,279-283,285-290
+  s_d8a6c2c7869d89::t_095b652addce6d 70-72
+  s_d8a6c2c7869d89::t_3ef77d9d22431d 21-26,62,84,331-346,397-415,433-434
+  s_d8a6c2c7869d89::t_ec7b67c697455f 284,291-292,310-328
+  s_d8a6c2c7869d89::t_8bae2493c81877 374-375,377
+  s_d8a6c2c7869d89::t_b5ce50571c5663 249-278
+  s_d8a6c2c7869d89::t_ca585635010fac 441
+  s_d8a6c2c7869d89::t_52198cb7b2fdcc 53,79,194,329-330,347-359
+  s_d8a6c2c7869d89::t_5ea3fe97d60047 424-432
+  s_d8a6c2c7869d89::t_66945b7018ec76 435-440,442-469
+  s_d8a6c2c7869d89::t_d61e6c4925f5a3 470-490
+  s_d8a6c2c7869d89::t_336f1ed54768aa 293-309
+gpu_broker/static/styles.css
+  s_d2cf996d21a3d3::t_f195f0a8917e95 4-6
+  s_d8a6c2c7869d89::t_4136d6c1c96ea4 10-11
+  s_d8a6c2c7869d89::t_47c0d86ff148a8 8-9
+README.md
+  s_d8a6c2c7869d89::t_4f5e19ce36901f 2-3
+  s_d8a6c2c7869d89::t_267639e36980f2 4,7,9-13,15-16,18-19
+  s_d8a6c2c7869d89::t_bee9844b9897c2 14,17
+gpu_broker/owner.py
+  s_d8a6c2c7869d89::t_511edaaee23c9d 141-142
+  s_d8a6c2c7869d89::t_beb34c658c3c14 54-58,67,78-79,627
+  s_d8a6c2c7869d89::t_87eb24e9a02e63 128-129,464,472-473
+  s_d8a6c2c7869d89::t_ffecbfa45aed1b 15,255,340,360,387,413
+  s_d8a6c2c7869d89::t_e8920b5e412213 130-132
+  s_d8a6c2c7869d89::t_79f3fe57f45935 449-462
+  s_d8a6c2c7869d89::t_3fe43c3d05bef1 1-14,17-53,59-66,68-77,80-127,133-140,145-191,225-254,256-321,323-328,330-339,341-359,361-368,373-386,388-412,414,419-448,463,465-471,474-597,599-626,628-658,663-721
+  s_d8a6c2c7869d89::t_1eeeb1435d768f 415-418
+  s_d8a6c2c7869d89::t_61a96700ed8c14 659-662
+  s_d8a6c2c7869d89::t_51103d0f95832d 369-372
+  s_d8a6c2c7869d89::t_e1f27532fecdc7 598
+  s_d8a6c2c7869d89::t_47db8abfa68c64 143-144,192,194-202,218-224,322,329
+  s_d8a6c2c7869d89::t_b43d2081b9239c 16,193,203-217
+tests/test_owner_runtime.py
+  s_d8a6c2c7869d89::t_4299800f2b9d61 6,147-157
+  s_d8a6c2c7869d89::t_f30ce891310ebf 140-146
+  s_d8a6c2c7869d89::t_bc61317469e498 1-3,7-25,29,31-38,47-78,80-97,102-139
+  s_d8a6c2c7869d89::t_204403aaf584be 4-5,26-28,30,39-43,46
+  s_d8a6c2c7869d89::t_d97a8ab5ee7a44 44-45,79,98-101
+tests/test_owner_cli.py
+  s_d8a6c2c7869d89::t_415b8c165b00c2 6-7,9-18
+  s_d8a6c2c7869d89::t_98e8bf590f32bd 1,5,8,19-28,30-36,38-44
+  s_d8a6c2c7869d89::t_edb0b07758ad88 29,37
+  s_d8a6c2c7869d89::t_285e53f2410d9b 2-3,45-60
+  s_d8a6c2c7869d89::t_acc7685ab5f07a 4,61-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3523ade0c0032e4c3fdfcd01d69dcd1d2858aebd",
+  "prompts": {},
+  "sessions": {
+    "s_71db67cf8751ad": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0cd4d-9767-7400-affa-5e2753d39249",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    },
+    "s_9f7652456e8616": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a03a0f-6460-7b73-bec4-9acbdcd78a39",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    },
+    "s_d2cf996d21a3d3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0d283-a3f1-7bc2-a71d-c5d8ebb4276b",
+        "model": "unknown"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    },
+    "s_d8a6c2c7869d89": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ac66-5ced-79f0-8a2d-3451930b38e6",
+        "model": "gpt-6-sol"
+      },
+      "human_author": null
+    },
+    "s_e8850ef125fb32": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0457f-8774-7b32-a516-a974107d6ab1",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    }
+  }
+}
