@@ -1,0 +1,77 @@
+gpu_broker/static/index.html
+  s_d8a6c2c7869d89::t_2629f538cc23d2 35
+gpu_broker/owner.py
+  s_d8a6c2c7869d89::t_5dfe9255858066 363,370-372,376,379-381,384-386,388-389,396,398-400,403-404,411-436,438
+  s_d8a6c2c7869d89::t_c267592fa37218 470-473,484,489,495-496,501-513,516-519,526,529-530,568-572,647-648,652,658
+  s_d8a6c2c7869d89::t_d49ff5faa37297 6-7
+  s_d8a6c2c7869d89::t_e239d73f8f8151 103,121,132-135,152-153,192-193,238-239,245,249,253
+  s_71db67cf8751ad::t_923ead513b180b 497-500
+  s_d8a6c2c7869d89::t_cb3757fe07c1b0 485-488,490-494
+gpu_broker/static/app.js
+  s_d8a6c2c7869d89::t_0e7008cfe81e23 167-168,172,175-176
+  s_d8a6c2c7869d89::t_b24e6696579329 151,153,155
+  s_d8a6c2c7869d89::t_08f0bb8f12b65e 165,173-174
+tests/test_owner_runtime.py
+  s_d8a6c2c7869d89::t_1655341fe52ba8 99-107
+gpu_broker/static/styles.css
+  s_d8a6c2c7869d89::t_0e7008cfe81e23 11
+docs/OWNER_API_CONTRACT.md
+  s_d8a6c2c7869d89::t_266c79c1f8d3d3 10
+docs/OWNER_V1_DESIGN_2026-09-23.md
+  s_d8a6c2c7869d89::t_a1aecfee38e843 47,72-74
+  s_d8a6c2c7869d89::t_529da1f058132c 100-101
+tests/test_owner_api.py
+  s_d8a6c2c7869d89::t_6cf66af2f48b6a 73,83,124,140,261,268,308,315
+tests/test_owner.py
+  s_d8a6c2c7869d89::t_5a5b20ef6b997f 84,103,409,412-415,436,455,457
+  s_d8a6c2c7869d89::t_ddd65f9b122b35 277-292,306-321
+  s_d8a6c2c7869d89::t_13051bc6924918 356-358,389-398
+  s_d8a6c2c7869d89::t_43c70b649a4cb3 60,87-88,252-276,322-336
+  s_d8a6c2c7869d89::t_56cf9e886439ac 297,301,303
+  s_d8a6c2c7869d89::t_08d7b46cdb6916 180-182,187-188,456
+  s_7e23799dc317a2::t_e7432924cb4c64 337-338,355,359-361,364-365
+  s_d8a6c2c7869d89::t_cb3757fe07c1b0 362-363,366-388
+  s_d8a6c2c7869d89::t_83fe5886f98ae8 652
+  s_d8a6c2c7869d89::t_01eccf16b8cba5 4
+  s_d8a6c2c7869d89::t_5e3cc749c09752 90-94
+  s_d8a6c2c7869d89::t_392021d16379ee 293-296,298-300,302,304-305
+docs/OWNER_OBSERVER_CONTRACT.md
+  s_d8a6c2c7869d89::t_266c79c1f8d3d3 33,37
+gpu_broker/owner_runtime.py
+  s_d8a6c2c7869d89::t_3ab253f6b25b1b 25,202-204,206,209
+docs/OWNER_ACCEPTANCE_MATRIX.md
+  s_d8a6c2c7869d89::t_71855660c134ff 19
+  s_d8a6c2c7869d89::t_e73c53a2c96fc4 18,24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ab0ebe0e339541f763d8b56b6cfbd7710dbf216b",
+  "prompts": {},
+  "sessions": {
+    "s_71db67cf8751ad": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0cd4d-9767-7400-affa-5e2753d39249",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    },
+    "s_7e23799dc317a2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ad52-c35f-7882-a496-5c0fabb841af",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "AIALRA-0 <71060413+AIALRA-0@users.noreply.github.com>"
+    },
+    "s_d8a6c2c7869d89": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ac66-5ced-79f0-8a2d-3451930b38e6",
+        "model": "gpt-6-sol"
+      },
+      "human_author": null
+    }
+  }
+}
